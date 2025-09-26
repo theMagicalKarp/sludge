@@ -1,0 +1,109 @@
+WHITESPACE = _{ " " | "\t" | "\n" | "\r" }
+COMMENT    = _{ "//" ~ (!"\n" ~ ANY)* }
+
+// Numbers support both integers and floating-point
+number = @{ ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT*)? }
+
+// Strings are double-quoted (Note: AWK also supports single quotes, but we'll keep it simple)
+string = @{ "\"" ~ (!"\"" ~ ANY)* ~ "\"" }
+
+// Identifiers start with letter or underscore, contain alphanumeric or underscore
+identifier = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
+
+// Arithmetic operators
+add      = { "+" }
+subtract = { "-" }
+multiply = { "*" }
+divide   = { "/" }
+modulo   = { "%" }
+power    = { "^" | "**" }
+
+// Assignment operators
+assign = { "=" }
+
+// Comparison operators
+eq = { "==" }
+ne = { "!=" }
+le = { "<=" }
+// Must come before "<" to avoid tokenizing "<=" as "<" + "=" in the `infix_op` rule later
+ge = { ">=" }
+// Must come before ">" to avoid tokenizing ">=" as ">" + "=" in the `infix_op` rule later
+lt = { "<" }
+gt = { ">" }
+
+// Logical operators
+logical_and = { "&&" }
+logical_or  = { "||" }
+logical_not = { "!" }
+
+param_list       = { identifier ~ ("," ~ identifier)* }
+function_literal = { "fn" ~ "(" ~ param_list? ~ ")" ~ block }
+
+function_call = { identifier ~ "(" ~ arg_list? ~ ")" }
+arg_list      = { expr ~ ("," ~ expr)* }
+return_stmt   = { "return" ~ expr? }
+
+// Primary expressions (atoms that cannot be broken down further)
+atom = _{
+    number
+  | string
+  | function_literal
+  | function_call
+  | identifier
+  | "(" ~ expr ~ ")"
+}
+
+// Expression structure for Pratt parser
+expr = { atom ~ (infix_op ~ atom)* }
+
+// All infix operations that the Pratt parser will handle
+infix_op = _{
+    add
+  | subtract
+  | multiply
+  | divide
+  | modulo
+  | power
+  | eq
+  | ne
+  | le
+  | ge
+  | lt
+  | gt
+  | logical_and
+  | logical_or
+  | logical_not
+}
+
+// Variable and field assignment
+assignment = { (identifier) ~ (assign) ~ expr }
+
+// Print statement with optional arguments
+print_stmt = { "print" ~ print_args? }
+print_args = { expr ~ ("," ~ expr)* }
+
+// Control flow
+if_stmt    = { "if" ~ "(" ~ expr ~ ")" ~ statement ~ ("else" ~ statement)? }
+while_stmt = { "while" ~ "(" ~ expr ~ ")" ~ statement }
+for_stmt   = { "for" ~ "(" ~ assignment? ~ ";" ~ expr? ~ ";" ~ assignment? ~ ")" ~ statement }
+
+// Block statements
+block = { "{" ~ statement* ~ "}" }
+
+// Expression as statement
+expr_stmt = { expr }
+
+// Union of all statement types
+statement = _{
+    assignment
+  | print_stmt
+  | if_stmt
+  | while_stmt
+  | for_stmt
+  | return_stmt
+  | block
+  | expr_stmt
+}
+
+// Complete program
+program = { SOI ~ (statement)* ~ EOI }

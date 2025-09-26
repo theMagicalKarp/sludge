@@ -1,0 +1,32 @@
+bar = fn(x, z) {
+  return x * z
+}
+
+foo = fn(a, b, c) {
+  x = a + b + c
+  return bar(x, 100)
+}
+
+print foo(1, 2, 43)
+
+x = 10
+y = 100
+
+if (x < y) {
+  print "test"
+}
+
+if (x > y) {
+  print "this should not happen"
+}
+
+i = 0
+
+while (i < 8) {
+  print i
+  i = i + 1
+}
+
+for (i = 0; i < 8; i = i + 1) {
+  print i
+}

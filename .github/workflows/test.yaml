@@ -1,0 +1,45 @@
+---
+name: 🧪 Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: cargo test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - run: cargo test --all-features
+
+  formatting:
+    name: cargo fmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          components: rustfmt,clippy
+      - name: Rustfmt Check
+        uses: actions-rust-lang/rustfmt@v1
+      - name: Run Clippy
+        run: cargo clippy --all-targets --all-features
+
+  build:
+    name: cargo build
+    needs: [test, formatting]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Run Clippy
+        run: cargo build --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build
+          path: target/release/sludge
+          retention-days: 3
