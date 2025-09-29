@@ -1,11 +1,16 @@
-use crate::ast::*;
-use anyhow::{Result, anyhow};
+pub mod value;
+pub mod variable_scope;
 
-use std::collections::HashMap;
+use crate::ast::*;
+use crate::interpreter::value::Value;
+use crate::interpreter::variable_scope::VariableScope;
+use anyhow::{Result, anyhow};
+use std::rc::Rc;
 
 pub struct Interpreter {
     // Variable storage for user-defined and built-in variables
-    variables: HashMap<String, Value>,
+    // variables: HashMap<String, Value>,
+    variables: Rc<VariableScope>,
 
     // Built-in variable state
     output_field_separator: String,  // OFS - Output field separator
@@ -13,17 +18,9 @@ pub struct Interpreter {
 }
 
 impl Interpreter {
-    pub fn new() -> Self {
-        let variables = HashMap::new();
+    pub fn new(variables: Rc<VariableScope>) -> Self {
         Self {
             variables,
-            output_field_separator: " ".to_string(),
-            output_record_separator: "\n".to_string(),
-        }
-    }
-    pub fn with_vars(vars: HashMap<String, Value>) -> Self {
-        Self {
-            variables: vars,
             output_field_separator: " ".to_string(),
             output_record_separator: "\n".to_string(),
         }
@@ -41,7 +38,6 @@ impl Interpreter {
             Expr::Identifier(name) => Ok(self
                 .variables
                 .get(name)
-                .cloned()
                 .unwrap_or(Value::String("".to_string()))),
 
             Expr::BinaryOp { op, left, right } => {
@@ -55,52 +51,53 @@ impl Interpreter {
                 self.eval_unary_op(op, &val)
             }
 
-            Expr::FunctionCall { name, args } => {
-                let fun = self.variables.get(name).unwrap();
-                let mut scope = Interpreter::with_vars(
-                    self.variables
-                        .iter()
-                        .map(|(k, v)| (k.clone(), v.clone()))
-                        .collect(),
-                );
-                match fun {
-                    Value::Function {
-                        arg_assignments,
-                        statements,
-                    } => {
-                        let mut to_ret = Value::Boolean(true);
-                        for (name, arg_expression) in arg_assignments.iter().zip(args.iter()) {
-                            let v = scope.eval_expr(arg_expression)?;
-                            scope.variables.insert(name.clone(), v);
+            Expr::FunctionCall { name, args } => match self.variables.get(name) {
+                Some(Value::Function {
+                    arguments,
+                    statement,
+                    scope,
+                }) => {
+                    let mut interpreter = Interpreter::new(VariableScope::branch(&scope));
+                    for (name, arg_expression) in arguments.iter().zip(args.iter()) {
+                        if let Ok(v) = self.eval_expr(arg_expression) {
+                            interpreter.variables.declare(name.clone(), v);
+                        } else {
+                            return Err(anyhow!("Failure setting function parameters"));
                         }
-                        for stmt in statements.clone() {
-                            match stmt {
-                                Statement::Return(expr) => {
-                                    to_ret = scope.eval_expr(&expr)?;
-                                }
-                                _ => {
-                                    scope.execute_statement(&stmt)?;
-                                }
-                            };
-                        }
-
-                        Ok(to_ret)
                     }
-                    _ => Err(anyhow!("Invalid function")),
+                    interpreter.eval_expr(&statement)
                 }
-            }
+                _ => Err(anyhow!("Invalid function")),
+            },
             Expr::Function {
-                arg_assignments,
-                statements,
+                arguments,
+                statement,
             } => Ok(Value::Function {
-                arg_assignments: arg_assignments
+                arguments: arguments
                     .iter()
-                    .map(|x| match x {
+                    .map(|argument| match argument {
                         AssignTarget::Identifier(name) => name.to_string(),
                     })
                     .collect(),
-                statements: statements.clone(),
+                scope: VariableScope::branch(&self.variables),
+                statement: statement.clone(),
             }),
+            Expr::Block(statements) => {
+                let mut interpreter = Interpreter::new(VariableScope::branch(&self.variables));
+                let mut to_ret = Value::Boolean(true);
+                for statement in statements.iter() {
+                    match statement {
+                        Statement::Return(expr) => {
+                            to_ret = interpreter.eval_expr(expr)?;
+                        }
+                        _ => {
+                            interpreter.execute_statement(statement)?;
+                        }
+                    }
+                }
+
+                Ok(to_ret)
+            }
         }
     }
 
@@ -158,7 +155,18 @@ impl Interpreter {
                         let final_value = match op {
                             AssignOp::Assign => new_value,
                         };
-                        self.variables.insert(name.clone(), final_value);
+                        self.variables.set(name.clone(), final_value);
+                    }
+                }
+            }
+            Statement::Declaration { target, op, value } => {
+                let new_value = self.eval_expr(value)?;
+                match target {
+                    AssignTarget::Identifier(name) => {
+                        let final_value = match op {
+                            AssignOp::Assign => new_value,
+                        };
+                        self.variables.declare(name.clone(), final_value);
                     }
                 }
             }
@@ -169,14 +177,14 @@ impl Interpreter {
             } => {
                 let cond_val = self.eval_expr(condition)?;
                 if cond_val.is_truthy() {
-                    self.execute_statement(then_stmt)?;
+                    self.eval_expr(then_stmt)?;
                 } else if let Some(else_branch) = else_stmt {
-                    self.execute_statement(else_branch)?;
+                    self.eval_expr(else_branch)?;
                 }
             }
             Statement::While { condition, body } => {
                 while self.eval_expr(condition)?.is_truthy() {
-                    self.execute_statement(body)?;
+                    self.eval_expr(body)?;
                 }
             }
             Statement::For {
@@ -196,7 +204,7 @@ impl Interpreter {
                         break;
                     }
 
-                    self.execute_statement(body)?;
+                    self.eval_expr(body)?;
 
                     if let Some(update_stmt) = update {
                         self.execute_statement(update_stmt)?;
@@ -205,9 +213,6 @@ impl Interpreter {
             }
             Statement::Return(expr) => {
                 self.eval_expr(expr)?;
-            }
-            Statement::Block(statements) => {
-                self.execute_statements(statements)?;
             }
             Statement::Expression(expr) => {
                 self.eval_expr(expr)?;

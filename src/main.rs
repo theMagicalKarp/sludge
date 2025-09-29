@@ -5,6 +5,7 @@ mod ast;
 mod interpreter;
 mod parser;
 
+use crate::interpreter::variable_scope::VariableScope;
 use interpreter::*;
 use parser::*;
 
@@ -18,7 +19,7 @@ fn main() -> Result<()> {
     let json = serde_json::to_string_pretty(&program).expect("Failed to serialize pretty");
     println!("{}", json);
 
-    let mut interpreter = Interpreter::new();
+    let mut interpreter = Interpreter::new(VariableScope::new());
     interpreter
         .run_program(&program)
         .map_err(|e| anyhow::anyhow!("Runtime error: {}", e))?;
