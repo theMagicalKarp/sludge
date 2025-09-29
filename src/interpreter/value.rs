@@ -1,7 +1,10 @@
+use crate::ast::*;
+use crate::interpreter::variable_scope::VariableScope;
 use anyhow::{Error, anyhow};
 use serde::Serialize;
 use std::cmp::Ordering;
 use std::ops::{Add, Div, Mul, Neg, Rem, Sub};
+use std::rc::Rc;
 
 #[derive(Serialize, Debug, Clone)]
 pub enum Value {
@@ -9,8 +12,10 @@ pub enum Value {
     Boolean(bool),
     String(String),
     Function {
-        arg_assignments: Vec<String>,
-        statements: Vec<Statement>,
+        arguments: Vec<String>,
+        statement: Box<Expr>,
+        #[serde(skip_serializing)]
+        scope: Rc<VariableScope>,
     },
 }
 
@@ -151,124 +156,4 @@ impl std::fmt::Display for Value {
             _ => Ok(()),
         }
     }
-}
-
-#[derive(Serialize, Debug, Clone)]
-pub enum Expr {
-    // Literal values
-    Number(i32),
-    String(String),
-
-    // Variable references
-    Identifier(String), // User-defined variables
-
-    Function {
-        arg_assignments: Vec<AssignTarget>,
-        statements: Vec<Statement>,
-    },
-
-    FunctionCall {
-        name: String,
-        args: Vec<Expr>,
-    },
-
-    // Binary operations: arithmetic, comparison, logical
-    BinaryOp {
-        op: BinOp,
-        left: Box<Expr>,
-        right: Box<Expr>,
-    },
-
-    // Unary operations: negation, logical not
-    UnaryOp {
-        op: UnOp,
-        operand: Box<Expr>,
-    },
-}
-
-#[derive(Serialize, Debug, Clone)]
-pub enum BinOp {
-    // Arithmetic
-    Add,
-    Sub,
-    Mul,
-    Div,
-    Mod,
-    Pow,
-
-    // Comparison
-    Eq,
-    Ne,
-    Lt,
-    Le,
-    Gt,
-    Ge,
-
-    // Logical
-    And,
-    Or,
-}
-
-#[derive(Serialize, Debug, Clone)]
-pub enum UnOp {
-    Neg, // Arithmetic negation: -x
-    Not, // Logical negation: !x
-}
-
-#[derive(Serialize, Debug, Clone)]
-pub enum Statement {
-    // Variable assignment: x = 5, $1 = "hello", y += 3
-    Assignment {
-        target: AssignTarget,
-        op: AssignOp,
-        value: Expr,
-    },
-
-    // Print statement: print, print $1, print x, y, z
-    Print(Vec<Expr>),
-
-    Return(Expr),
-
-    // Control flow
-    If {
-        condition: Expr,
-        then_stmt: Box<Statement>,
-        else_stmt: Option<Box<Statement>>,
-    },
-
-    While {
-        condition: Expr,
-        body: Box<Statement>,
-    },
-
-    For {
-        init: Option<Box<Statement>>,
-        condition: Option<Expr>,
-        update: Option<Box<Statement>>,
-        body: Box<Statement>,
-    },
-
-    // Block statement: { stmt1; stmt2; stmt3 }
-    Block(Vec<Statement>),
-
-    // Expression as statement (for side effects)
-    Expression(Expr),
-}
-
-// Assignment targets: variables or field references
-#[derive(Serialize, Debug, Clone)]
-pub enum AssignTarget {
-    Identifier(String), // Regular variable: x = 5
-}
-
-// Assignment operators
-#[derive(Serialize, Debug, Clone)]
-pub enum AssignOp {
-    Assign, // =
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct Program {
-    // pub rules: Vec<SludgeRule>, // All rules in the program
-    pub statements: Vec<Statement>,
 }

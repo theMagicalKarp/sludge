@@ -44,69 +44,9 @@ pub fn parse_program(input: &str) -> Result<Program> {
     Ok(Program { statements })
 }
 
-fn parse_expr(pairs: Pairs<Rule>) -> Result<Expr> {
+fn parse_exprs(pairs: Pairs<Rule>) -> Result<Expr> {
     PRATT_PARSER
-        .map_primary(|primary| {
-            // Handle primary expressions (atoms)
-            match primary.as_rule() {
-                Rule::number => Ok(Expr::Number(primary.as_str().parse().unwrap())),
-                Rule::string => {
-                    let s = primary.as_str();
-                    // Remove surrounding quotes
-                    Ok(Expr::String(s[1..s.len() - 1].to_string()))
-                }
-                Rule::identifier => Ok(Expr::Identifier(primary.as_str().to_string())),
-                Rule::function_literal => {
-                    let inner = primary.into_inner();
-                    let mut arg_assignments = Vec::new();
-                    let mut statements = Vec::new();
-                    for node in inner {
-                        if node.as_rule() == Rule::param_list {
-                            for arg_pair in node.into_inner() {
-                                if arg_pair.as_rule() == Rule::identifier {
-                                    // args.push(Expr::Identifier(arg_pair.as_str().to_string()));
-                                    arg_assignments.push(AssignTarget::Identifier(
-                                        arg_pair.as_str().to_string(),
-                                    ))
-                                }
-                            }
-                        } else if node.as_rule() == Rule::block {
-                            // statements.push(parse_statement(node)?);
-                            for block_inner in node.into_inner() {
-                                statements.push(parse_statement(block_inner)?);
-                            }
-                        }
-                    }
-
-                    Ok(Expr::Function {
-                        arg_assignments,
-                        statements,
-                    })
-                }
-                Rule::function_call => {
-                    let mut inner = primary.into_inner();
-                    let name = inner.next().unwrap().as_str().to_string();
-                    let mut args = Vec::new();
-
-                    for node in inner {
-                        if node.as_rule() == Rule::arg_list {
-                            for arg_pair in node.into_inner() {
-                                if arg_pair.as_rule() == Rule::expr {
-                                    args.push(parse_expr(arg_pair.into_inner())?);
-                                }
-                            }
-                        }
-                    }
-
-                    Ok(Expr::FunctionCall { name, args })
-                }
-                Rule::expr => {
-                    // Parenthesized expression
-                    parse_expr(primary.into_inner())
-                }
-                _ => Err(anyhow!("Unexpected primary: {:?}", primary)),
-            }
-        })
+        .map_primary(parse_expr)
         .map_infix(|lhs, op, rhs| {
             // Handle binary operations
             let bin_op = match op.as_rule() {
@@ -147,6 +87,70 @@ fn parse_expr(pairs: Pairs<Rule>) -> Result<Expr> {
         .parse(pairs)
 }
 
+fn parse_expr(primary: Pair<Rule>) -> Result<Expr> {
+    match primary.as_rule() {
+        Rule::number => Ok(Expr::Number(primary.as_str().parse().unwrap())),
+        Rule::string => {
+            let s = primary.as_str();
+            // Remove surrounding quotes
+            Ok(Expr::String(s[1..s.len() - 1].to_string()))
+        }
+        Rule::identifier => Ok(Expr::Identifier(primary.as_str().to_string())),
+        Rule::function_literal => {
+            let inner = primary.into_inner();
+            let mut arguments = Vec::new();
+            let mut statement = Box::new(Expr::Number(42));
+            for node in inner {
+                if node.as_rule() == Rule::param_list {
+                    for arg_pair in node.into_inner() {
+                        if arg_pair.as_rule() == Rule::param {
+                            for x in arg_pair.into_inner() {
+                                arguments.push(AssignTarget::Identifier(x.as_str().to_string()))
+                            }
+                        }
+                    }
+                } else if node.as_rule() == Rule::block {
+                    statement = Box::new(parse_expr(node)?);
+                }
+            }
+
+            Ok(Expr::Function {
+                arguments,
+                statement,
+            })
+        }
+        Rule::function_call => {
+            let mut inner = primary.into_inner();
+            let name = inner.next().unwrap().as_str().to_string();
+            let mut args = Vec::new();
+
+            for node in inner {
+                if node.as_rule() == Rule::arg_list {
+                    for arg_pair in node.into_inner() {
+                        if arg_pair.as_rule() == Rule::expr {
+                            args.push(parse_exprs(arg_pair.into_inner())?);
+                        }
+                    }
+                }
+            }
+
+            Ok(Expr::FunctionCall { name, args })
+        }
+        Rule::block => {
+            let mut statements = Vec::new();
+            for inner in primary.into_inner() {
+                statements.push(parse_statement(inner)?);
+            }
+            Ok(Expr::Block(statements))
+        }
+        Rule::expr => {
+            // Parenthesized expression
+            parse_exprs(primary.into_inner())
+        }
+        _ => Err(anyhow!("Unexpected primary: {:?}", primary)),
+    }
+}
+
 fn parse_statement(pair: Pair<Rule>) -> Result<Statement> {
     match pair.as_rule() {
         Rule::print_stmt => {
@@ -155,7 +159,7 @@ fn parse_statement(pair: Pair<Rule>) -> Result<Statement> {
                 if inner.as_rule() == Rule::print_args {
                     for arg_pair in inner.into_inner() {
                         if arg_pair.as_rule() == Rule::expr {
-                            exprs.push(parse_expr(arg_pair.into_inner())?);
+                            exprs.push(parse_exprs(arg_pair.into_inner())?);
                         }
                     }
                 }
@@ -178,17 +182,38 @@ fn parse_statement(pair: Pair<Rule>) -> Result<Statement> {
                 _ => return Err(anyhow!("Invalid assignment operator")),
             };
 
-            let value = parse_expr(value_pair.into_inner())?;
+            let value = parse_exprs(value_pair.into_inner())?;
 
             Ok(Statement::Assignment { target, op, value })
         }
 
+        Rule::declaration => {
+            let mut inner = pair.into_inner();
+            let target_pair = inner.next().unwrap();
+            let op_pair = inner.next().unwrap();
+            let value_pair = inner.next().unwrap();
+            let target = match target_pair.as_rule() {
+                Rule::identifier => AssignTarget::Identifier(target_pair.as_str().to_string()),
+                _ => return Err(anyhow!("Invalid assignment target")),
+            };
+
+            let op = match op_pair.as_rule() {
+                Rule::assign => AssignOp::Assign,
+                _ => return Err(anyhow!("Invalid assignment operator")),
+            };
+
+            let value = parse_expr(value_pair)?;
+
+            Ok(Statement::Declaration { target, op, value })
+        }
+
         Rule::if_stmt => {
             let mut inner = pair.into_inner();
-            let condition = parse_expr(inner.next().unwrap().into_inner())?;
-            let then_stmt = Box::new(parse_statement(inner.next().unwrap())?);
+            let condition = parse_expr(inner.next().unwrap())?;
+
+            let then_stmt = Box::new(parse_expr(inner.next().unwrap())?);
             let else_stmt = if let Some(else_pair) = inner.next() {
-                Some(Box::new(parse_statement(else_pair)?))
+                Some(Box::new(parse_expr(else_pair)?))
             } else {
                 None
             };
@@ -201,8 +226,8 @@ fn parse_statement(pair: Pair<Rule>) -> Result<Statement> {
         Rule::while_stmt => {
             let mut inner = pair.into_inner();
             let condition_pair = inner.next().unwrap();
-            let condition = parse_expr(condition_pair.into_inner())?;
-            let body = Box::new(parse_statement(inner.next().unwrap())?);
+            let condition = parse_exprs(condition_pair.into_inner())?;
+            let body = Box::new(parse_expr(inner.next().unwrap())?);
             Ok(Statement::While { condition, body })
         }
         Rule::for_stmt => {
@@ -211,7 +236,7 @@ fn parse_statement(pair: Pair<Rule>) -> Result<Statement> {
             let mut init = None;
             let mut condition = None;
             let mut update = None;
-            let mut body = None;
+            let mut body: Option<Box<Expr>> = None;
 
             for part in inner {
                 match part.as_rule() {
@@ -222,35 +247,35 @@ fn parse_statement(pair: Pair<Rule>) -> Result<Statement> {
                             update = Some(Box::new(parse_statement(part)?));
                         }
                     }
-                    Rule::expr => {
-                        condition = Some(parse_expr(part.into_inner())?);
+                    Rule::declaration => {
+                        if init.is_none() {
+                            init = Some(Box::new(parse_statement(part)?));
+                        } else {
+                            update = Some(Box::new(parse_statement(part)?));
+                        }
                     }
-                    Rule::statement => {
-                        body = Some(Box::new(parse_statement(part)?));
+                    Rule::expr => {
+                        condition = Some(parse_exprs(part.into_inner())?);
                     }
                     Rule::block => {
-                        body = Some(Box::new(parse_statement(part)?));
+                        body = Some(Box::new(parse_expr(part)?));
                     }
                     _ => {}
                 }
             }
 
-            Ok(Statement::For {
-                init,
-                condition,
-                update,
-                body: body.unwrap(),
-            })
-        }
-        Rule::return_stmt => Ok(Statement::Return(parse_expr(pair.into_inner())?)),
-        Rule::block => {
-            let mut statements = Vec::new();
-            for inner in pair.into_inner() {
-                statements.push(parse_statement(inner)?);
+            match body {
+                Some(body) => Ok(Statement::For {
+                    init,
+                    condition,
+                    update,
+                    body,
+                }),
+                None => Err(anyhow!("Body undefined in for loop")),
             }
-            Ok(Statement::Block(statements))
         }
-        Rule::expr_stmt => Ok(Statement::Expression(parse_expr(pair.into_inner())?)),
+        Rule::return_stmt => Ok(Statement::Return(parse_exprs(pair.into_inner())?)),
+        Rule::expr_stmt => Ok(Statement::Expression(parse_exprs(pair.into_inner())?)),
         _ => Err(anyhow!("Unsupported statement type: {:?}", pair.as_rule())),
     }
 }

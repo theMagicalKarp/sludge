@@ -1,32 +1,53 @@
-bar = fn(x, z) {
-  return x * z
-}
+let bar = fn(x, z) {
+  return x * z;
+};
 
-foo = fn(a, b, c) {
-  x = a + b + c
-  return bar(x, 100)
-}
+let foo = fn(a, b, c) {
+  let x = a + b + c;
+  return bar(x, 100);
+};
 
-print foo(1, 2, 43)
+print(foo(1, 2, 43));
 
-x = 10
-y = 100
+let x = 10;
+let y = 100;
+
+print(x);
 
 if (x < y) {
-  print "test"
+  print("test");
 }
 
 if (x > y) {
-  print "this should not happen"
+  print("this should not happen");
 }
 
-i = 0
+let i = 0;
 
 while (i < 8) {
-  print i
-  i = i + 1
+  print(i);
+  i = i + 1;
 }
 
-for (i = 0; i < 8; i = i + 1) {
-  print i
+for (let i = 0; i < 4; i = i + 1) {
+  for (let j = 0; j < 4; j = j + 1) {
+    print(i, j);
+  }
 }
+
+let hello = {
+  let a = 100;
+  let b = 200;
+  let c = 300;
+  print(a);
+  return "world";
+};
+
+print(a);
+print(hello);
+
+print({
+  return 1;
+} + {
+  return 2;
+});

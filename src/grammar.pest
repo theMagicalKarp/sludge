@@ -10,13 +10,18 @@ string = @{ "\"" ~ (!"\"" ~ ANY)* ~ "\"" }
 // Identifiers start with letter or underscore, contain alphanumeric or underscore
 identifier = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
 
+type_expr    = { type_primary ~ array_suffix* }
+type_primary = { identifier ~ type_args? }
+type_args    = { "<" ~ type_expr ~ ("," ~ type_expr)* ~ ">" }
+array_suffix = { "[]" }
+
 // Arithmetic operators
 add      = { "+" }
 subtract = { "-" }
 multiply = { "*" }
 divide   = { "/" }
 modulo   = { "%" }
-power    = { "^" | "**" }
+power    = { "^" }
 
 // Assignment operators
 assign = { "=" }
@@ -36,8 +41,9 @@ logical_and = { "&&" }
 logical_or  = { "||" }
 logical_not = { "!" }
 
-param_list       = { identifier ~ ("," ~ identifier)* }
-function_literal = { "fn" ~ "(" ~ param_list? ~ ")" ~ block }
+param            = { identifier ~ (":" ~ type_expr)? }
+param_list       = { param ~ ("," ~ param)* }
+function_literal = { "fn" ~ "(" ~ param_list? ~ ")" ~ (":" ~ type_expr)? ~ block }
 
 function_call = { identifier ~ "(" ~ arg_list? ~ ")" }
 arg_list      = { expr ~ ("," ~ expr)* }
@@ -49,6 +55,7 @@ atom = _{
   | string
   | function_literal
   | function_call
+  | block
   | identifier
   | "(" ~ expr ~ ")"
 }
@@ -79,29 +86,30 @@ infix_op = _{
 assignment = { (identifier) ~ (assign) ~ expr }
 
 // Print statement with optional arguments
-print_stmt = { "print" ~ print_args? }
+print_stmt = { "print(" ~ print_args? ~ ")" }
 print_args = { expr ~ ("," ~ expr)* }
 
 // Control flow
-if_stmt    = { "if" ~ "(" ~ expr ~ ")" ~ statement ~ ("else" ~ statement)? }
-while_stmt = { "while" ~ "(" ~ expr ~ ")" ~ statement }
-for_stmt   = { "for" ~ "(" ~ assignment? ~ ";" ~ expr? ~ ";" ~ assignment? ~ ")" ~ statement }
+if_stmt    = { "if" ~ "(" ~ expr ~ ")" ~ block ~ ("else" ~ block)? }
+while_stmt = { "while" ~ "(" ~ expr ~ ")" ~ block }
+for_stmt   = { "for" ~ "(" ~ (assignment | declaration)? ~ ";" ~ expr? ~ ";" ~ assignment? ~ ")" ~ block }
 
 // Block statements
 block = { "{" ~ statement* ~ "}" }
 
 // Expression as statement
-expr_stmt = { expr }
+expr_stmt   = { expr }
+declaration = { "let" ~ identifier ~ (":" ~ type_expr)? ~ assign ~ expr }
 
 // Union of all statement types
 statement = _{
-    assignment
-  | print_stmt
+    declaration ~ ";"
+  | assignment ~ ";"
+  | print_stmt ~ ";"
   | if_stmt
   | while_stmt
   | for_stmt
-  | return_stmt
-  | block
+  | return_stmt ~ ";"
   | expr_stmt
 }
 
