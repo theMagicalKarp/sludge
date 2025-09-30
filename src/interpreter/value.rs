@@ -53,6 +53,7 @@ impl PartialOrd for Value {
         }
     }
 }
+
 impl Value {
     pub fn pow(self, exp: Value) -> Result<Value, Error> {
         match (self, exp) {
@@ -125,6 +126,7 @@ impl Div for Value {
         }
     }
 }
+
 impl Rem for Value {
     type Output = Result<Value, Error>;
 
@@ -136,6 +138,7 @@ impl Rem for Value {
         }
     }
 }
+
 impl Neg for Value {
     type Output = Result<Value, Error>;
 

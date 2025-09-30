@@ -3,11 +3,12 @@ use std::fs;
 
 mod ast;
 mod interpreter;
-mod parser;
 
+use crate::ast::parser::parse_program;
 use crate::interpreter::variable_scope::VariableScope;
+
 use interpreter::*;
-use parser::*;
+use std::io::{self, BufWriter, Write};
 
 fn main() -> Result<()> {
     let file = "main.sludge";
@@ -19,9 +20,14 @@ fn main() -> Result<()> {
     let json = serde_json::to_string_pretty(&program).expect("Failed to serialize pretty");
     println!("{}", json);
 
-    let mut interpreter = Interpreter::new(VariableScope::new());
+    let stdout = io::stdout();
+    let handle = stdout.lock(); // lock() is recommended for efficiency
+    let mut writer = BufWriter::new(handle);
+
+    let mut interpreter = Interpreter::new(VariableScope::new(), &mut writer);
     interpreter
         .run_program(&program)
         .map_err(|e| anyhow::anyhow!("Runtime error: {}", e))?;
+    writer.flush()?;
     Ok(())
 }
