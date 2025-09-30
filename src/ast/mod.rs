@@ -1,3 +1,5 @@
+pub mod parser;
+
 use serde::Serialize;
 
 #[derive(Serialize, Debug, Clone)]

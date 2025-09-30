@@ -4,23 +4,28 @@ pub mod variable_scope;
 use crate::ast::*;
 use crate::interpreter::value::Value;
 use crate::interpreter::variable_scope::VariableScope;
+
 use anyhow::{Result, anyhow};
+use std::io::Write;
 use std::rc::Rc;
 
-pub struct Interpreter {
+pub struct Interpreter<'a, W: Write> {
     // Variable storage for user-defined and built-in variables
     // variables: HashMap<String, Value>,
     variables: Rc<VariableScope>,
+
+    stdout: &'a mut W,
 
     // Built-in variable state
     output_field_separator: String,  // OFS - Output field separator
     output_record_separator: String, // ORS - Output record separator
 }
 
-impl Interpreter {
-    pub fn new(variables: Rc<VariableScope>) -> Self {
+impl<'a, W: Write> Interpreter<'a, W> {
+    pub fn new(variables: Rc<VariableScope>, stdout: &'a mut W) -> Self {
         Self {
             variables,
+            stdout,
             output_field_separator: " ".to_string(),
             output_record_separator: "\n".to_string(),
         }
@@ -57,14 +62,18 @@ impl Interpreter {
                     statement,
                     scope,
                 }) => {
-                    let mut interpreter = Interpreter::new(VariableScope::branch(&scope));
-                    for (name, arg_expression) in arguments.iter().zip(args.iter()) {
-                        if let Ok(v) = self.eval_expr(arg_expression) {
-                            interpreter.variables.declare(name.clone(), v);
-                        } else {
-                            return Err(anyhow!("Failure setting function parameters"));
-                        }
+                    let mut evaluated_args = Vec::with_capacity(args.len());
+                    for arg_expr in args.iter() {
+                        evaluated_args.push(self.eval_expr(arg_expr)?);
                     }
+
+                    let mut interpreter =
+                        Interpreter::new(VariableScope::branch(&scope), self.stdout);
+
+                    for (name, value) in arguments.iter().cloned().zip(evaluated_args.into_iter()) {
+                        interpreter.variables.declare(name, value);
+                    }
+
                     interpreter.eval_expr(&statement)
                 }
                 _ => Err(anyhow!("Invalid function")),
@@ -83,7 +92,8 @@ impl Interpreter {
                 statement: statement.clone(),
             }),
             Expr::Block(statements) => {
-                let mut interpreter = Interpreter::new(VariableScope::branch(&self.variables));
+                let mut interpreter =
+                    Interpreter::new(VariableScope::branch(&self.variables), self.stdout);
                 let mut to_ret = Value::Boolean(true);
                 for statement in statements.iter() {
                     match statement {
@@ -142,11 +152,13 @@ impl Interpreter {
                     exprs.iter().map(|expr| self.eval_expr(expr)).collect();
                 let values = values?;
                 let output: Vec<String> = values.iter().map(|v| v.to_string()).collect();
-                print!(
+                write!(
+                    self.stdout,
                     "{}{}",
                     output.join(&self.output_field_separator),
                     self.output_record_separator
-                );
+                )?;
+                self.stdout.flush()?;
             }
             Statement::Assignment { target, op, value } => {
                 let new_value = self.eval_expr(value)?;
@@ -155,7 +167,10 @@ impl Interpreter {
                         let final_value = match op {
                             AssignOp::Assign => new_value,
                         };
-                        self.variables.set(name.clone(), final_value);
+                        return match self.variables.set(name.clone(), final_value) {
+                            Some(_) => Ok(()),
+                            None => Err(anyhow!("'{}' is an undefined variable!", name)),
+                        };
                     }
                 }
             }
@@ -218,6 +233,29 @@ impl Interpreter {
                 self.eval_expr(expr)?;
             }
         }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ast::parser::parse_program;
+
+    #[test]
+    fn test_basic() -> anyhow::Result<()> {
+        let mut buffer: Vec<u8> = Vec::new();
+        let program = parse_program({
+            "
+                let x = 123;
+                print(x);
+            "
+        })?;
+        let mut interpreter = Interpreter::new(VariableScope::new(), &mut buffer);
+        interpreter.run_program(&program)?;
+
+        assert_eq!(String::from_utf8(buffer)?, "123\n");
+
         Ok(())
     }
 }
