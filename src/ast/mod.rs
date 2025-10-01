@@ -105,9 +105,6 @@ pub enum Statement {
         body: Box<Expr>,
     },
 
-    // Block statement: { stmt1; stmt2; stmt3 }
-    // Block(Vec<Statement>),
-
     // Expression as statement (for side effects)
     Expression(Expr),
 }

@@ -35,19 +35,3 @@ for (let i = 0; i < 4; i = i + 1) {
   }
 }
 
-let hello = {
-  let a = 100;
-  let b = 200;
-  let c = 300;
-  print(a);
-  return "world";
-};
-
-print(a);
-print(hello);
-
-print({
-  return 1;
-} + {
-  return 2;
-});
