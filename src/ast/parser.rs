@@ -23,7 +23,7 @@ lazy_static::lazy_static! {
             .op(Op::infix(multiply, Left) | Op::infix(divide, Left) | Op::infix(modulo, Left)) // * / %
             .op(Op::infix(power, Right)) // ^ ** (right-associative)
             // Highest precedence
-            .op(Op::prefix(logical_not) | Op::prefix(subtract)) // ! - (unary)
+            .op(Op::prefix(logical_not) | Op::prefix(unary_minus)) // ! - (unary)
     };
 }
 
@@ -73,9 +73,8 @@ fn parse_exprs(pairs: Pairs<Rule>) -> Result<Expr> {
             })
         })
         .map_prefix(|op, rhs| {
-            // Handle unary operations
             let un_op = match op.as_rule() {
-                Rule::subtract => UnOp::Neg,
+                Rule::unary_minus => UnOp::Neg,
                 Rule::logical_not => UnOp::Not,
                 _ => return Err(anyhow!("Unexpected prefix op: {:?}", op)),
             };

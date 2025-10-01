@@ -8,6 +8,7 @@ use std::rc::Rc;
 
 #[derive(Serialize, Debug, Clone)]
 pub enum Value {
+    Null,
     Int32(i32),
     Boolean(bool),
     String(String),
@@ -17,11 +18,15 @@ pub enum Value {
         #[serde(skip_serializing)]
         scope: Rc<VariableScope>,
     },
+    Return {
+        value: Box<Value>,
+    },
 }
 
 impl Value {
     pub fn is_truthy(&self) -> bool {
         match self {
+            Value::Null => false,
             Value::String(s) => !s.is_empty(),
             Value::Boolean(v) => *v,
             Value::Int32(n) => *n == 0,
@@ -34,6 +39,7 @@ impl PartialEq for Value {
     fn eq(&self, other: &Self) -> bool {
         use Value::*;
         match (self, other) {
+            (Null, Null) => true,
             (Int32(a), Int32(b)) => a == b,
             (Boolean(a), Boolean(b)) => a == b,
             (String(a), String(b)) => a == b,
@@ -153,6 +159,7 @@ impl Neg for Value {
 impl std::fmt::Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Value::Null => write!(f, "NULL"),
             Value::Int32(n) => write!(f, "{n}"),
             Value::Boolean(n) => write!(f, "{n}"),
             Value::String(n) => write!(f, "{n}"),

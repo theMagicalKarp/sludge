@@ -50,7 +50,7 @@ arg_list      = { expr ~ ("," ~ expr)* }
 return_stmt   = { "return" ~ expr? }
 
 // Primary expressions (atoms that cannot be broken down further)
-atom = _{
+primary = _{
     number
   | string
   | function_literal
@@ -59,6 +59,8 @@ atom = _{
   | identifier
   | "(" ~ expr ~ ")"
 }
+
+atom = _{ unary_op? ~ primary }
 
 // Expression structure for Pratt parser
 expr = { atom ~ (infix_op ~ atom)* }
@@ -81,6 +83,10 @@ infix_op = _{
   | logical_or
   | logical_not
 }
+
+unary_minus = { "-" }
+
+unary_op = _{ unary_minus | logical_not }
 
 // Variable and field assignment
 assignment = { (identifier) ~ (assign) ~ expr }
