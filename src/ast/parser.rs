@@ -118,22 +118,39 @@ fn parse_expr(primary: Pair<Rule>) -> Result<Expr> {
                 statement,
             })
         }
+
         Rule::function_call => {
             let mut inner = primary.into_inner();
-            let name = inner.next().unwrap().as_str().to_string();
-            let mut args = Vec::new();
+            let name = Box::new(parse_expr(inner.next().unwrap())?);
+            let mut callable: Option<Callable> = None;
 
             for node in inner {
-                if node.as_rule() == Rule::arg_list {
-                    for arg_pair in node.into_inner() {
-                        if arg_pair.as_rule() == Rule::expr {
-                            args.push(parse_exprs(arg_pair.into_inner())?);
+                let mut args = Vec::new();
+                if node.as_rule() == Rule::call_suffix {
+                    for node2 in node.into_inner() {
+                        if node2.as_rule() == Rule::arg_list {
+                            for arg_pair in node2.into_inner() {
+                                if arg_pair.as_rule() == Rule::expr {
+                                    args.push(parse_exprs(arg_pair.into_inner())?);
+                                }
+                            }
                         }
+                    }
+                    if let Some(previous) = callable {
+                        callable = Some(Callable {
+                            name: Box::new(Expr::FunctionCall(previous)),
+                            args,
+                        });
+                    } else {
+                        callable = Some(Callable {
+                            name: name.clone(),
+                            args,
+                        });
                     }
                 }
             }
 
-            Ok(Expr::FunctionCall { name, args })
+            Ok(Expr::FunctionCall(callable.unwrap()))
         }
         Rule::block => {
             let mut statements = Vec::new();
