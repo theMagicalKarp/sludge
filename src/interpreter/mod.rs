@@ -54,15 +54,12 @@ impl<'a, W: Write> Interpreter<'a, W> {
                 self.eval_unary_op(op, &val)
             }
 
-            Expr::FunctionCall(callable) => {
-                let name = callable.name.clone();
-                let args = callable.args.clone();
-
+            Expr::Call { target, args } => {
                 let Ok(Value::Function {
                     arguments,
                     statement,
                     scope,
-                }) = self.eval_expr(&name)
+                }) = self.eval_expr(target)
                 else {
                     return Err(anyhow!("Invalid function"));
                 };

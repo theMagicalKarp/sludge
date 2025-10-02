@@ -3,12 +3,6 @@ pub mod parser;
 use serde::Serialize;
 
 #[derive(Serialize, Debug, Clone)]
-pub struct Callable {
-    pub name: Box<Expr>,
-    pub args: Vec<Expr>,
-}
-
-#[derive(Serialize, Debug, Clone)]
 pub enum Expr {
     // Literal values
     Number(i32),
@@ -24,7 +18,10 @@ pub enum Expr {
         statement: Box<Expr>,
     },
 
-    FunctionCall(Callable),
+    Call {
+        target: Box<Expr>,
+        args: Vec<Expr>,
+    },
 
     // Binary operations: arithmetic, comparison, logical
     BinaryOp {
