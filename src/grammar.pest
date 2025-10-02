@@ -45,9 +45,13 @@ param            = { identifier ~ (":" ~ type_expr)? }
 param_list       = { param ~ ("," ~ param)* }
 function_literal = { "fn" ~ "(" ~ param_list? ~ ")" ~ (":" ~ type_expr)? ~ block }
 
-function_call = { identifier ~ "(" ~ arg_list? ~ ")" }
-arg_list      = { expr ~ ("," ~ expr)* }
-return_stmt   = { "return" ~ expr? }
+call_suffix   = { "(" ~ arg_list? ~ ")" }
+function_call = {
+    (identifier | "(" ~ expr ~ ")") ~ call_suffix+
+}
+
+arg_list    = { expr ~ ("," ~ expr)* }
+return_stmt = { "return" ~ expr? }
 
 // Primary expressions (atoms that cannot be broken down further)
 primary = _{

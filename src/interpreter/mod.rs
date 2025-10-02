@@ -54,19 +54,22 @@ impl<'a, W: Write> Interpreter<'a, W> {
                 self.eval_unary_op(op, &val)
             }
 
-            Expr::FunctionCall { name, args } => {
-                let Some(Value::Function {
+            Expr::FunctionCall(callable) => {
+                let name = callable.name.clone();
+                let args = callable.args.clone();
+
+                let Ok(Value::Function {
                     arguments,
                     statement,
                     scope,
-                }) = self.variables.get(name)
+                }) = self.eval_expr(&name)
                 else {
-                    return Err(anyhow!("Invalid function: {name}"));
+                    return Err(anyhow!("Invalid function"));
                 };
 
                 if arguments.len() != args.len() {
                     return Err(anyhow!(
-                        "Function {name} expected {} args, got {}",
+                        "Function expected {} args, got {}",
                         arguments.len(),
                         args.len()
                     ));
@@ -510,6 +513,35 @@ mod tests {
         let actual = String::from_utf8(buffer)?;
 
         let expected = ["479001600", ""].join("\n");
+        assert_eq!(actual, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn test_function_curry() -> anyhow::Result<()> {
+        let mut buffer: Vec<u8> = Vec::new();
+        let program = parse_program({
+            r#"
+                let foo = fn(a) {
+                return fn(b) {
+                    return a + b;
+                };
+                };
+
+                let addTen = foo(10);
+                let addFive = foo(5);
+
+                print(addTen(42));
+                print(addFive(42));
+                print(foo(2)(40));
+            "#
+        })?;
+
+        Interpreter::new(VariableScope::new(), &mut buffer).run_program(&program)?;
+
+        let actual = String::from_utf8(buffer)?;
+
+        let expected = ["52", "47", "42", ""].join("\n");
         assert_eq!(actual, expected);
         Ok(())
     }
