@@ -8,6 +8,15 @@ pub enum Expr {
     Number(i32),
     String(String),
 
+    Array {
+        values: Vec<Expr>,
+    },
+
+    Member {
+        target: Box<Expr>,
+        field: String,
+    },
+
     // Variable references
     Identifier(String), // User-defined variables
 

@@ -2,6 +2,7 @@ pub mod value;
 pub mod variable_scope;
 
 use crate::ast::*;
+use crate::interpreter::value::BuiltInFn;
 use crate::interpreter::value::Value;
 use crate::interpreter::variable_scope::VariableScope;
 
@@ -35,8 +36,46 @@ impl<'a, W: Write> Interpreter<'a, W> {
 
     fn eval_expr(&mut self, expr: &Expr) -> Result<Value> {
         match expr {
+            Expr::Member { target, field } => {
+                let target = self.eval_expr(target)?;
+                match target {
+                    Value::Array { values } => match field.as_str() {
+                        "sum" => Ok(Value::Builtin(BuiltInFn {
+                            run: Rc::new(move |_input: Vec<Value>| values.iter().sum()),
+                        })),
+                        "join" => Ok(Value::Builtin(BuiltInFn {
+                            run: Rc::new(move |input: Vec<Value>| {
+                                let delimiter: String = match input.first() {
+                                    Some(Value::String(s)) => s.clone(),
+                                    Some(v) => v.to_string(),
+                                    None => String::new(),
+                                };
+
+                                let joined = values
+                                    .iter()
+                                    .map(|v| v.to_string())
+                                    .collect::<Vec<_>>()
+                                    .join(&delimiter);
+
+                                Value::String(joined)
+                            }),
+                        })),
+
+                        _ => Ok(Value::Null),
+                    },
+                    _ => Ok(Value::Null),
+                }
+            }
             Expr::Number(n) => Ok(Value::Int32(*n)),
             Expr::String(s) => Ok(Value::String(s.clone())),
+            Expr::Array { values } => Ok({
+                let values: Vec<_> = values
+                    .iter()
+                    .map(|e| self.eval_expr(e))
+                    .collect::<Result<_, _>>()?;
+
+                Value::Array { values }
+            }),
 
             Expr::Identifier(name) => Ok(self
                 .variables
@@ -54,40 +93,46 @@ impl<'a, W: Write> Interpreter<'a, W> {
                 self.eval_unary_op(op, &val)
             }
 
-            Expr::Call { target, args } => {
-                let Ok(Value::Function {
+            Expr::Call { target, args } => match self.eval_expr(target) {
+                Ok(Value::Builtin(builtin)) => {
+                    let evaluated_args: Vec<_> = args
+                        .iter()
+                        .map(|e| self.eval_expr(e))
+                        .collect::<Result<_, _>>()?;
+                    Ok((builtin.run)(evaluated_args))
+                }
+                Ok(Value::Function {
                     arguments,
                     statement,
                     scope,
-                }) = self.eval_expr(target)
-                else {
-                    return Err(anyhow!("Invalid function"));
-                };
+                }) => {
+                    if arguments.len() != args.len() {
+                        return Err(anyhow!(
+                            "Function expected {} args, got {}",
+                            arguments.len(),
+                            args.len()
+                        ));
+                    }
 
-                if arguments.len() != args.len() {
-                    return Err(anyhow!(
-                        "Function expected {} args, got {}",
-                        arguments.len(),
-                        args.len()
-                    ));
+                    let evaluated_args: Vec<_> = args
+                        .iter()
+                        .map(|e| self.eval_expr(e))
+                        .collect::<Result<_, _>>()?;
+
+                    let mut interpreter =
+                        Interpreter::new(VariableScope::branch(&scope), self.stdout);
+
+                    for (param, value) in arguments.iter().cloned().zip(evaluated_args) {
+                        interpreter.variables.declare(param, value);
+                    }
+
+                    match interpreter.eval_expr(&statement)? {
+                        Value::Return { value } => Ok(*value),
+                        other => Ok(other),
+                    }
                 }
-
-                let evaluated_args: Vec<_> = args
-                    .iter()
-                    .map(|e| self.eval_expr(e))
-                    .collect::<Result<_, _>>()?;
-
-                let mut interpreter = Interpreter::new(VariableScope::branch(&scope), self.stdout);
-
-                for (param, value) in arguments.iter().cloned().zip(evaluated_args) {
-                    interpreter.variables.declare(param, value);
-                }
-
-                match interpreter.eval_expr(&statement)? {
-                    Value::Return { value } => Ok(*value),
-                    other => Ok(other),
-                }
-            }
+                _ => Err(anyhow!("Invalid function")),
+            },
             Expr::Function {
                 arguments,
                 statement,
@@ -101,6 +146,7 @@ impl<'a, W: Write> Interpreter<'a, W> {
                 scope: VariableScope::branch(&self.variables),
                 statement: statement.clone(),
             }),
+
             Expr::Block(statements) => {
                 let mut interpreter =
                     Interpreter::new(VariableScope::branch(&self.variables), self.stdout);
@@ -539,6 +585,27 @@ mod tests {
         let actual = String::from_utf8(buffer)?;
 
         let expected = ["52", "47", "42", ""].join("\n");
+        assert_eq!(actual, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn test_array() -> anyhow::Result<()> {
+        let mut buffer: Vec<u8> = Vec::new();
+        let program = parse_program({
+            r#"
+                let x = [1,2,3];
+
+                print(x.sum());
+                print(x.join(">"));
+            "#
+        })?;
+
+        Interpreter::new(VariableScope::new(), &mut buffer).run_program(&program)?;
+
+        let actual = String::from_utf8(buffer)?;
+
+        let expected = ["6", "1>2>3", ""].join("\n");
         assert_eq!(actual, expected);
         Ok(())
     }

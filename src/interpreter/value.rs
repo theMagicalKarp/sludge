@@ -3,8 +3,29 @@ use crate::interpreter::variable_scope::VariableScope;
 use anyhow::{Error, anyhow};
 use serde::Serialize;
 use std::cmp::Ordering;
+use std::fmt;
+use std::iter::Sum;
 use std::ops::{Add, Div, Mul, Neg, Rem, Sub};
 use std::rc::Rc;
+
+pub struct BuiltInFn {
+    pub run: Rc<dyn Fn(Vec<Value>) -> Value>,
+}
+
+impl fmt::Debug for BuiltInFn {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str("<builtin fn>")
+    }
+}
+
+// if you want to clone Value easily:
+impl Clone for BuiltInFn {
+    fn clone(&self) -> Self {
+        Self {
+            run: self.run.clone(),
+        }
+    }
+}
 
 #[derive(Serialize, Debug, Clone)]
 pub enum Value {
@@ -18,6 +39,11 @@ pub enum Value {
         #[serde(skip_serializing)]
         scope: Rc<VariableScope>,
     },
+    #[serde(skip_serializing)]
+    Builtin(BuiltInFn),
+    Array {
+        values: Vec<Value>,
+    },
     Return {
         value: Box<Value>,
     },
@@ -30,6 +56,7 @@ impl Value {
             Value::String(s) => !s.is_empty(),
             Value::Boolean(v) => *v,
             Value::Int32(n) => *n == 0,
+            Value::Array { values } => !values.is_empty(),
             _ => false,
         }
     }
@@ -104,6 +131,40 @@ impl Sub for Value {
     }
 }
 
+impl Sum for Value {
+    fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
+        let mut total: Option<Value> = None;
+
+        for v in iter {
+            total = match total {
+                Some(total) => (total + v).ok(),
+                None => Some(v),
+            };
+        }
+        match total {
+            Some(total) => total,
+            None => Value::Null,
+        }
+    }
+}
+
+impl<'a> Sum<&'a Value> for Value {
+    fn sum<I: Iterator<Item = &'a Value>>(iter: I) -> Self {
+        let mut total: Option<Value> = None;
+
+        for v in iter {
+            total = match total {
+                Some(total) => (total + v.clone()).ok(),
+                None => Some(v.clone()),
+            };
+        }
+        match total {
+            Some(total) => total,
+            None => Value::Null,
+        }
+    }
+}
+
 impl Mul for Value {
     type Output = Result<Value, Error>;
     fn mul(self, rhs: Value) -> Self::Output {
@@ -163,6 +224,17 @@ impl std::fmt::Display for Value {
             Value::Int32(n) => write!(f, "{n}"),
             Value::Boolean(n) => write!(f, "{n}"),
             Value::String(n) => write!(f, "{n}"),
+            Value::Array { values } => {
+                write!(
+                    f,
+                    "[{}]",
+                    values
+                        .iter()
+                        .map(|v| v.to_string())
+                        .collect::<Vec<String>>()
+                        .join(", ")
+                )
+            }
             _ => Ok(()),
         }
     }

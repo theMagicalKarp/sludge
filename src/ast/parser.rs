@@ -24,7 +24,7 @@ lazy_static::lazy_static! {
             .op(Op::infix(power, Right)) // ^ ** (right-associative)
             // Highest precedence
             .op(Op::prefix(logical_not) | Op::prefix(unary_minus)) // ! - (unary)
-            .op(Op::postfix(call_suffix))
+            .op(Op::postfix(member_access) | Op::postfix(call_suffix))
     };
 }
 
@@ -84,16 +84,29 @@ fn parse_exprs(pairs: Pairs<Rule>) -> Result<Expr> {
                 operand: Box::new(rhs?),
             })
         })
-        .map_postfix(|op, rhs| {
-            let target = Box::new(match op {
-                Ok(v) => v,
-                _ => return Err(anyhow!("Unexpected postfix op: {:?}", op)),
-            });
-            let args = rhs
-                .into_inner()
-                .map(|node| parse_expr(node))
-                .collect::<Result<_, _>>()?;
-            Ok(Expr::Call { target, args })
+        .map_postfix(|lhs, postfix| {
+            let target = Box::new(lhs?);
+            match postfix.as_rule() {
+                Rule::call_suffix => {
+                    // `arg_list` is a silent rule, so we get expr pairs directly.
+                    let args = postfix
+                        .into_inner()
+                        .map(|p| parse_expr(p))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    Ok(Expr::Call { target, args })
+                }
+                Rule::member_access => {
+                    // "." ~ identifier
+                    let field = postfix
+                        .into_inner()
+                        .next()
+                        .ok_or_else(|| anyhow!("missing field name in member access"))?
+                        .as_str()
+                        .to_string();
+                    Ok(Expr::Member { target, field })
+                }
+                _ => Err(anyhow!("Unexpected postfix: {:?}", postfix)),
+            }
         })
         .parse(pairs)
 }
@@ -126,6 +139,13 @@ fn parse_expr(primary: Pair<Rule>) -> Result<Expr> {
                 }),
                 _ => Err(anyhow!("Statement not found!")),
             }
+        }
+        Rule::array_expr => {
+            let mut values = Vec::new();
+            for inner in primary.into_inner() {
+                values.push(parse_expr(inner)?);
+            }
+            Ok(Expr::Array { values })
         }
         Rule::block => {
             let mut statements = Vec::new();
