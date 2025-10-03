@@ -41,30 +41,25 @@ logical_and = { "&&" }
 logical_or  = { "||" }
 logical_not = { "!" }
 
-param            = { identifier ~ (":" ~ type_expr)? }
-param_list       = { param ~ ("," ~ param)* }
-function_literal = { "fn" ~ "(" ~ param_list? ~ ")" ~ (":" ~ type_expr)? ~ block }
+param            =  { identifier ~ (":" ~ type_expr)? }
+param_list       = _{ param ~ ("," ~ param)* }
+function_literal =  { "fn" ~ "(" ~ param_list? ~ ")" ~ (":" ~ type_expr)? ~ block }
 
-call_suffix   = { "(" ~ arg_list? ~ ")" }
-function_call = {
-    (identifier | "(" ~ expr ~ ")") ~ call_suffix+
-}
-
-arg_list    = { expr ~ ("," ~ expr)* }
-return_stmt = { "return" ~ expr? }
+arg_list    = _{ expr ~ ("," ~ expr)* }
+return_stmt =  { "return" ~ expr? }
 
 // Primary expressions (atoms that cannot be broken down further)
 primary = _{
     number
   | string
   | function_literal
-  | function_call
   | block
   | identifier
   | "(" ~ expr ~ ")"
 }
 
-atom = _{ unary_op? ~ primary }
+call_suffix =  { "(" ~ arg_list? ~ ")" }
+atom        = _{ unary_op? ~ primary ~ call_suffix* }
 
 // Expression structure for Pratt parser
 expr = { atom ~ (infix_op ~ atom)* }

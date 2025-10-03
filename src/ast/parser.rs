@@ -24,6 +24,7 @@ lazy_static::lazy_static! {
             .op(Op::infix(power, Right)) // ^ ** (right-associative)
             // Highest precedence
             .op(Op::prefix(logical_not) | Op::prefix(unary_minus)) // ! - (unary)
+            .op(Op::postfix(call_suffix))
     };
 }
 
@@ -83,6 +84,17 @@ fn parse_exprs(pairs: Pairs<Rule>) -> Result<Expr> {
                 operand: Box::new(rhs?),
             })
         })
+        .map_postfix(|op, rhs| {
+            let target = Box::new(match op {
+                Ok(v) => v,
+                _ => return Err(anyhow!("Unexpected postfix op: {:?}", op)),
+            });
+            let args = rhs
+                .into_inner()
+                .map(|node| parse_expr(node))
+                .collect::<Result<_, _>>()?;
+            Ok(Expr::Call { target, args })
+        })
         .parse(pairs)
 }
 
@@ -98,59 +110,22 @@ fn parse_expr(primary: Pair<Rule>) -> Result<Expr> {
         Rule::function_literal => {
             let inner = primary.into_inner();
             let mut arguments = Vec::new();
-            let mut statement = Box::new(Expr::Number(42));
+            let mut statement: Option<Box<Expr>> = None;
             for node in inner {
-                if node.as_rule() == Rule::param_list {
-                    for arg_pair in node.into_inner() {
-                        if arg_pair.as_rule() == Rule::param {
-                            for x in arg_pair.into_inner() {
-                                arguments.push(AssignTarget::Identifier(x.as_str().to_string()))
-                            }
-                        }
-                    }
+                if node.as_rule() == Rule::param {
+                    arguments.push(AssignTarget::Identifier(node.as_str().to_string()));
                 } else if node.as_rule() == Rule::block {
-                    statement = Box::new(parse_expr(node)?);
+                    statement = Some(Box::new(parse_expr(node)?));
                 }
             }
 
-            Ok(Expr::Function {
-                arguments,
-                statement,
-            })
-        }
-
-        Rule::function_call => {
-            let mut inner = primary.into_inner();
-            let name = Box::new(parse_expr(inner.next().unwrap())?);
-            let mut callable: Option<Callable> = None;
-
-            for node in inner {
-                let mut args = Vec::new();
-                if node.as_rule() == Rule::call_suffix {
-                    for node2 in node.into_inner() {
-                        if node2.as_rule() == Rule::arg_list {
-                            for arg_pair in node2.into_inner() {
-                                if arg_pair.as_rule() == Rule::expr {
-                                    args.push(parse_exprs(arg_pair.into_inner())?);
-                                }
-                            }
-                        }
-                    }
-                    if let Some(previous) = callable {
-                        callable = Some(Callable {
-                            name: Box::new(Expr::FunctionCall(previous)),
-                            args,
-                        });
-                    } else {
-                        callable = Some(Callable {
-                            name: name.clone(),
-                            args,
-                        });
-                    }
-                }
+            match statement {
+                Some(statement) => Ok(Expr::Function {
+                    arguments,
+                    statement,
+                }),
+                _ => Err(anyhow!("Statement not found!")),
             }
-
-            Ok(Expr::FunctionCall(callable.unwrap()))
         }
         Rule::block => {
             let mut statements = Vec::new();
