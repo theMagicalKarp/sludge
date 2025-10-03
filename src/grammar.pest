@@ -8,7 +8,8 @@ number = @{ ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT*)? }
 string = @{ "\"" ~ (!"\"" ~ ANY)* ~ "\"" }
 
 // Identifiers start with letter or underscore, contain alphanumeric or underscore
-identifier = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
+identifier    = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
+member_access =  { "." ~ identifier }
 
 type_expr    = { type_primary ~ array_suffix* }
 type_primary = { identifier ~ type_args? }
@@ -48,6 +49,9 @@ function_literal =  { "fn" ~ "(" ~ param_list? ~ ")" ~ (":" ~ type_expr)? ~ bloc
 arg_list    = _{ expr ~ ("," ~ expr)* }
 return_stmt =  { "return" ~ expr? }
 
+array_list = _{ expr ~ ("," ~ expr)* }
+array_expr =  { "[" ~ array_list? ~ "]" }
+
 // Primary expressions (atoms that cannot be broken down further)
 primary = _{
     number
@@ -55,11 +59,12 @@ primary = _{
   | function_literal
   | block
   | identifier
+  | array_expr
   | "(" ~ expr ~ ")"
 }
 
 call_suffix =  { "(" ~ arg_list? ~ ")" }
-atom        = _{ unary_op? ~ primary ~ call_suffix* }
+atom        = _{ unary_op? ~ primary ~ (member_access | call_suffix)* }
 
 // Expression structure for Pratt parser
 expr = { atom ~ (infix_op ~ atom)* }
@@ -86,9 +91,9 @@ infix_op = _{
 unary_minus = { "-" }
 
 unary_op = _{ unary_minus | logical_not }
-
+lvalue   = _{ identifier ~ member_access* }
 // Variable and field assignment
-assignment = { (identifier) ~ (assign) ~ expr }
+assignment = { (lvalue) ~ (assign) ~ expr }
 
 // Print statement with optional arguments
 print_stmt = { "print(" ~ print_args? ~ ")" }
