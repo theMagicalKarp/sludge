@@ -1,33 +1,67 @@
 use crate::ast::*;
+use crate::interpreter::Interpreter;
 use crate::interpreter::variable_scope::VariableScope;
+
 use anyhow::{Error, anyhow};
 use serde::Serialize;
+use std::cell::RefCell;
 use std::cmp::Ordering;
-use std::fmt;
+use std::collections::HashMap;
+use std::collections::HashSet;
 use std::iter::Sum;
 use std::ops::{Add, Div, Mul, Neg, Rem, Sub};
 use std::rc::Rc;
 
-pub struct BuiltInFn {
-    pub run: Rc<dyn Fn(Vec<Value>) -> Value>,
+pub trait BuiltinFn: std::fmt::Debug {
+    fn call(&self, args: &[Value]) -> Result<Value, Error>;
 }
 
-impl fmt::Debug for BuiltInFn {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.write_str("<builtin fn>")
+#[derive(Clone)]
+pub struct NamedBuiltin<F> {
+    pub name: &'static str,
+    pub this: Value,
+    pub f: F,
+}
+
+impl<F> std::fmt::Debug for NamedBuiltin<F> {
+    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        fmt.debug_tuple("Builtin").field(&self.name).finish()
     }
 }
 
-// if you want to clone Value easily:
-impl Clone for BuiltInFn {
-    fn clone(&self) -> Self {
-        Self {
-            run: self.run.clone(),
-        }
+impl<F> BuiltinFn for NamedBuiltin<F>
+where
+    F: Fn(&Value, &[Value]) -> Result<Value, Error>,
+{
+    fn call(&self, args: &[Value]) -> Result<Value, Error> {
+        (self.f)(&self.this, args)
     }
 }
 
-#[derive(Serialize, Debug, Clone)]
+#[derive(Clone)]
+pub struct NamedBuiltinWithInterpreter<F> {
+    pub name: &'static str,
+    pub this: Value,
+    pub interpreter: Rc<Interpreter>,
+    pub f: F,
+}
+
+impl<F> std::fmt::Debug for NamedBuiltinWithInterpreter<F> {
+    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        fmt.debug_tuple("Builtin").field(&self.name).finish()
+    }
+}
+
+impl<F> BuiltinFn for NamedBuiltinWithInterpreter<F>
+where
+    F: Fn(Rc<Interpreter>, &Value, &[Value]) -> Result<Value, Error>,
+{
+    fn call(&self, args: &[Value]) -> Result<Value, Error> {
+        (self.f)(self.interpreter.clone(), &self.this, args)
+    }
+}
+
+#[derive(Clone, Debug)]
 pub enum Value {
     Null,
     Int32(i32),
@@ -36,17 +70,82 @@ pub enum Value {
     Function {
         arguments: Vec<String>,
         statement: Box<Expr>,
-        #[serde(skip_serializing)]
         scope: Rc<VariableScope>,
     },
-    #[serde(skip_serializing)]
-    Builtin(BuiltInFn),
-    Array {
+    List {
+        values: Rc<RefCell<Vec<Value>>>,
+    },
+    Dictionary {
+        values: Rc<RefCell<HashMap<Hashable, Value>>>,
+    },
+    Tuple {
         values: Vec<Value>,
+    },
+    Set {
+        values: Rc<RefCell<HashSet<Hashable>>>,
     },
     Return {
         value: Box<Value>,
     },
+    BuiltinFn(Rc<dyn BuiltinFn>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+pub enum Hashable {
+    Null,
+    Int32(i32),
+    Boolean(bool),
+    String(String),
+}
+
+impl Hashable {
+    pub fn as_value(&self) -> Value {
+        match self {
+            Hashable::Null => Value::Null,
+            Hashable::Int32(i) => Value::Int32(*i),
+            Hashable::Boolean(b) => Value::Boolean(*b),
+            Hashable::String(s) => Value::String(s.clone()),
+        }
+    }
+}
+
+impl TryFrom<Value> for Hashable {
+    type Error = Error; // use your error type
+
+    fn try_from(v: Value) -> Result<Self, Self::Error> {
+        match v {
+            Value::Null => Ok(Hashable::Null),
+            Value::Int32(i) => Ok(Hashable::Int32(i)),
+            Value::Boolean(b) => Ok(Hashable::Boolean(b)),
+            Value::String(s) => Ok(Hashable::String(s)),
+            _ => Err(anyhow!("invalid key")),
+        }
+    }
+}
+
+impl TryFrom<&Value> for Hashable {
+    type Error = Error; // use your error type
+
+    fn try_from(v: &Value) -> Result<Self, Self::Error> {
+        match v {
+            Value::Null => Ok(Hashable::Null),
+            Value::Int32(i) => Ok(Hashable::Int32(*i)),
+            Value::Boolean(b) => Ok(Hashable::Boolean(*b)),
+            Value::String(s) => Ok(Hashable::String(s.clone())),
+            _ => Err(anyhow!("invalid key")),
+        }
+    }
+}
+
+impl std::fmt::Display for Hashable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Hashable::Null => write!(f, "NULL"),
+            Hashable::Int32(n) => write!(f, "{n}"),
+            Hashable::Boolean(n) => write!(f, "{n}"),
+            Hashable::String(n) => write!(f, "{n}"),
+        }
+    }
 }
 
 impl Value {
@@ -56,7 +155,7 @@ impl Value {
             Value::String(s) => !s.is_empty(),
             Value::Boolean(v) => *v,
             Value::Int32(n) => *n == 0,
-            Value::Array { values } => !values.is_empty(),
+            Value::List { values } => !values.borrow().is_empty(),
             _ => false,
         }
     }
@@ -224,10 +323,46 @@ impl std::fmt::Display for Value {
             Value::Int32(n) => write!(f, "{n}"),
             Value::Boolean(n) => write!(f, "{n}"),
             Value::String(n) => write!(f, "{n}"),
-            Value::Array { values } => {
+            Value::List { values } => {
                 write!(
                     f,
-                    "[{}]",
+                    "list({})",
+                    values
+                        .borrow()
+                        .iter()
+                        .map(|v| v.to_string())
+                        .collect::<Vec<String>>()
+                        .join(", ")
+                )
+            }
+            Value::Dictionary { values } => {
+                write!(
+                    f,
+                    "dict({})",
+                    values
+                        .borrow()
+                        .iter()
+                        .map(|(k, v)| format!("({k}, {v})"))
+                        .collect::<Vec<String>>()
+                        .join(", ")
+                )
+            }
+            Value::Set { values } => {
+                write!(
+                    f,
+                    "set({})",
+                    values
+                        .borrow()
+                        .iter()
+                        .map(|k| format!("{k}"))
+                        .collect::<Vec<String>>()
+                        .join(", ")
+                )
+            }
+            Value::Tuple { values } => {
+                write!(
+                    f,
+                    "tuple({})",
                     values
                         .iter()
                         .map(|v| v.to_string())

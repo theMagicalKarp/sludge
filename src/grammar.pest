@@ -46,20 +46,20 @@ param            =  { identifier ~ (":" ~ type_expr)? }
 param_list       = _{ param ~ ("," ~ param)* }
 function_literal =  { "fn" ~ "(" ~ param_list? ~ ")" ~ (":" ~ type_expr)? ~ block }
 
-arg_list    = _{ expr ~ ("," ~ expr)* }
-return_stmt =  { "return" ~ expr? }
+arg_list   = _{ expr ~ ("," ~ expr)* }
+tuple_expr =  { "(" ~ expr ~ ("," ~ expr)+ ~ (",")? ~ ")" }
 
-array_list = _{ expr ~ ("," ~ expr)* }
-array_expr =  { "[" ~ array_list? ~ "]" }
+// Return statement
+return_stmt = { "return" ~ expr? }
 
 // Primary expressions (atoms that cannot be broken down further)
 primary = _{
     number
   | string
   | function_literal
+  | tuple_expr
   | block
   | identifier
-  | array_expr
   | "(" ~ expr ~ ")"
 }
 
@@ -100,7 +100,8 @@ print_stmt = { "print(" ~ print_args? ~ ")" }
 print_args = { expr ~ ("," ~ expr)* }
 
 // Control flow
-if_stmt    = { "if" ~ "(" ~ expr ~ ")" ~ block ~ ("else" ~ block)? }
+// if_stmt    = { "if" ~ "(" ~ expr ~ ")" ~ block ~ ("else" ~ block)? }
+if_stmt    = { "if" ~ "(" ~ expr ~ ")" ~ block ~ ("else" ~ (if_stmt | block))? }
 while_stmt = { "while" ~ "(" ~ expr ~ ")" ~ block }
 for_stmt   = { "for" ~ "(" ~ (assignment | declaration)? ~ ";" ~ expr? ~ ";" ~ assignment? ~ ")" ~ block }
 
@@ -113,13 +114,13 @@ declaration = { "let" ~ identifier ~ (":" ~ type_expr)? ~ assign ~ expr }
 
 // Union of all statement types
 statement = _{
-    declaration ~ ";"
-  | assignment ~ ";"
-  | print_stmt ~ ";"
+    declaration
+  | assignment
+  | print_stmt
   | if_stmt
   | while_stmt
   | for_stmt
-  | return_stmt ~ ";"
+  | return_stmt
   | expr_stmt
 }
 

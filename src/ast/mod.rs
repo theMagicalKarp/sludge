@@ -8,7 +8,7 @@ pub enum Expr {
     Number(i32),
     String(String),
 
-    Array {
+    Tuple {
         values: Vec<Expr>,
     },
 

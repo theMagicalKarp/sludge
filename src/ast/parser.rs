@@ -140,12 +140,12 @@ fn parse_expr(primary: Pair<Rule>) -> Result<Expr> {
                 _ => Err(anyhow!("Statement not found!")),
             }
         }
-        Rule::array_expr => {
+        Rule::tuple_expr => {
             let mut values = Vec::new();
             for inner in primary.into_inner() {
                 values.push(parse_expr(inner)?);
             }
-            Ok(Expr::Array { values })
+            Ok(Expr::Tuple { values })
         }
         Rule::block => {
             let mut statements = Vec::new();
@@ -220,20 +220,33 @@ fn parse_statement(pair: Pair<Rule>) -> Result<Statement> {
 
         Rule::if_stmt => {
             let mut inner = pair.into_inner();
-            let condition = parse_expr(inner.next().unwrap())?;
+            let condition_pair = inner.next().unwrap();
+            let condition = parse_expr(condition_pair)?;
 
-            let then_stmt = Box::new(parse_expr(inner.next().unwrap())?);
+            // Parse the 'then' block
+            let then_pair = inner.next().unwrap();
+            let then_stmt = Box::new(parse_expr(then_pair)?);
+
+            // Handle optional 'else' clause
             let else_stmt = if let Some(else_pair) = inner.next() {
-                Some(Box::new(parse_expr(else_pair)?))
+                match else_pair.as_rule() {
+                    // Recursive "else if"
+                    Rule::if_stmt => Some(Box::new(Expr::Block(vec![parse_statement(else_pair)?]))),
+                    // Regular "else { ... }"
+                    Rule::block => Some(Box::new(parse_expr(else_pair)?)),
+                    _ => return Err(anyhow!("Invalid else clause")),
+                }
             } else {
                 None
             };
+
             Ok(Statement::If {
                 condition,
                 then_stmt,
                 else_stmt,
             })
         }
+
         Rule::while_stmt => {
             let mut inner = pair.into_inner();
             let condition_pair = inner.next().unwrap();
