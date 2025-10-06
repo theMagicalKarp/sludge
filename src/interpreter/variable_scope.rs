@@ -1,4 +1,7 @@
+use crate::interpreter::builtins;
+use crate::interpreter::value::NamedBuiltin;
 use crate::interpreter::value::Value;
+
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -12,8 +15,30 @@ pub struct VariableScope {
 impl VariableScope {
     /// Create a new root scope.
     pub fn new() -> Rc<Self> {
+        let new_list = Rc::new(NamedBuiltin {
+            name: "list",
+            this: Value::Null,
+            f: builtins::list::new,
+        });
+
+        let new_dict = Rc::new(NamedBuiltin {
+            name: "dict",
+            this: Value::Null,
+            f: builtins::dict::dict,
+        });
+
+        let new_set = Rc::new(NamedBuiltin {
+            name: "set",
+            this: Value::Null,
+            f: builtins::set::set,
+        });
+
         Rc::new(Self {
-            variables: RefCell::new(HashMap::new()),
+            variables: RefCell::new(HashMap::from([
+                (String::from("list"), Value::BuiltinFn(new_list)),
+                (String::from("dict"), Value::BuiltinFn(new_dict)),
+                (String::from("set"), Value::BuiltinFn(new_set)),
+            ])),
             parent: None,
         })
     }

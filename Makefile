@@ -24,7 +24,7 @@ fmt:
 
 # Check for linting issues
 lint:
-	$(CARGO) clippy
+	$(CARGO) clippy --all-targets --all-features
 
-fix:
-	$(CARGO) clippy --fix --allow-dirty
+fix: fmt
+	$(CARGO) clippy --fix --allow-dirty --all-targets --all-features

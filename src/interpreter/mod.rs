@@ -1,66 +1,184 @@
+pub mod builtins;
+#[cfg(test)]
+mod tests;
 pub mod value;
 pub mod variable_scope;
 
 use crate::ast::*;
-use crate::interpreter::value::BuiltInFn;
+use crate::interpreter::value::NamedBuiltin;
+use crate::interpreter::value::NamedBuiltinWithInterpreter;
 use crate::interpreter::value::Value;
+
 use crate::interpreter::variable_scope::VariableScope;
 
 use anyhow::{Result, anyhow};
+use std::cell::RefCell;
 use std::io::Write;
 use std::rc::Rc;
 
-pub struct Interpreter<'a, W: Write> {
+pub struct Interpreter {
     variables: Rc<VariableScope>,
 
-    stdout: &'a mut W,
-
-    // Built-in variable state
-    output_field_separator: String,  // OFS - Output field separator
-    output_record_separator: String, // ORS - Output record separator
+    stdout: Rc<RefCell<dyn Write>>,
 }
 
-impl<'a, W: Write> Interpreter<'a, W> {
-    pub fn new(variables: Rc<VariableScope>, stdout: &'a mut W) -> Self {
-        Self {
-            variables,
-            stdout,
-            output_field_separator: " ".to_string(),
-            output_record_separator: "\n".to_string(),
-        }
+impl Interpreter {
+    pub fn new(variables: Rc<VariableScope>, stdout: Rc<RefCell<dyn Write>>) -> Self {
+        Self { variables, stdout }
     }
 
-    pub fn run_program(&mut self, program: &Program) -> Result<Value> {
+    pub fn run_program(&self, program: &Program) -> Result<Value> {
         self.execute_statements(&program.statements)
     }
 
-    fn eval_expr(&mut self, expr: &Expr) -> Result<Value> {
+    fn eval_expr(&self, expr: &Expr) -> Result<Value> {
         match expr {
             Expr::Member { target, field } => {
                 let target = self.eval_expr(target)?;
                 match target {
-                    Value::Array { values } => match field.as_str() {
-                        "sum" => Ok(Value::Builtin(BuiltInFn {
-                            run: Rc::new(move |_input: Vec<Value>| values.iter().sum()),
-                        })),
-                        "join" => Ok(Value::Builtin(BuiltInFn {
-                            run: Rc::new(move |input: Vec<Value>| {
-                                let delimiter: String = match input.first() {
-                                    Some(Value::String(s)) => s.clone(),
-                                    Some(v) => v.to_string(),
-                                    None => String::new(),
-                                };
-
-                                let joined = values
-                                    .iter()
-                                    .map(|v| v.to_string())
-                                    .collect::<Vec<_>>()
-                                    .join(&delimiter);
-
-                                Value::String(joined)
-                            }),
-                        })),
-
+                    Value::List { values } => match field.as_str() {
+                        "join" => Ok(Value::BuiltinFn(Rc::new(NamedBuiltin {
+                            name: "join",
+                            this: Value::List { values },
+                            f: builtins::list::join,
+                        }))),
+                        "length" => Ok(Value::BuiltinFn(Rc::new(NamedBuiltin {
+                            name: "length",
+                            this: Value::List { values },
+                            f: builtins::list::length,
+                        }))),
+                        "at" => Ok(Value::BuiltinFn(Rc::new(NamedBuiltin {
+                            name: "at",
+                            this: Value::List { values },
+                            f: builtins::list::at,
+                        }))),
+                        "pop" => Ok(Value::BuiltinFn(Rc::new(NamedBuiltin {
+                            name: "pop",
+                            this: Value::List { values },
+                            f: builtins::list::pop,
+                        }))),
+                        "push" => Ok(Value::BuiltinFn(Rc::new(NamedBuiltin {
+                            name: "push",
+                            this: Value::List { values },
+                            f: builtins::list::push,
+                        }))),
+                        "map" => Ok(Value::BuiltinFn(Rc::new(NamedBuiltinWithInterpreter {
+                            name: "map",
+                            this: Value::List { values },
+                            interpreter: Rc::new(Interpreter::new(
+                                VariableScope::branch(&self.variables),
+                                self.stdout.clone(),
+                            )),
+                            f: builtins::list::map,
+                        }))),
+                        "filter" => Ok(Value::BuiltinFn(Rc::new(NamedBuiltinWithInterpreter {
+                            name: "filter",
+                            this: Value::List { values },
+                            interpreter: Rc::new(Interpreter::new(
+                                VariableScope::branch(&self.variables),
+                                self.stdout.clone(),
+                            )),
+                            f: builtins::list::filter,
+                        }))),
+                        "all" => Ok(Value::BuiltinFn(Rc::new(NamedBuiltinWithInterpreter {
+                            name: "all",
+                            this: Value::List { values },
+                            interpreter: Rc::new(Interpreter::new(
+                                VariableScope::branch(&self.variables),
+                                self.stdout.clone(),
+                            )),
+                            f: builtins::list::all,
+                        }))),
+                        "any" => Ok(Value::BuiltinFn(Rc::new(NamedBuiltinWithInterpreter {
+                            name: "any",
+                            this: Value::List { values },
+                            interpreter: Rc::new(Interpreter::new(
+                                VariableScope::branch(&self.variables),
+                                self.stdout.clone(),
+                            )),
+                            f: builtins::list::any,
+                        }))),
+                        "sum" => Ok(Value::BuiltinFn(Rc::new(NamedBuiltin {
+                            name: "sum",
+                            this: Value::List { values },
+                            f: builtins::list::sum,
+                        }))),
+                        _ => Ok(Value::Null),
+                    },
+                    Value::Set { values } => match field.as_str() {
+                        "has" => Ok(Value::BuiltinFn(Rc::new(NamedBuiltin {
+                            name: "has",
+                            this: Value::Set { values },
+                            f: builtins::set::has,
+                        }))),
+                        "union" => Ok(Value::BuiltinFn(Rc::new(NamedBuiltin {
+                            name: "union",
+                            this: Value::Set { values },
+                            f: builtins::set::union,
+                        }))),
+                        "intersection" => Ok(Value::BuiltinFn(Rc::new(NamedBuiltin {
+                            name: "intersection",
+                            this: Value::Set { values },
+                            f: builtins::set::intersection,
+                        }))),
+                        "difference" => Ok(Value::BuiltinFn(Rc::new(NamedBuiltin {
+                            name: "difference",
+                            this: Value::Set { values },
+                            f: builtins::set::difference,
+                        }))),
+                        "add" => Ok(Value::BuiltinFn(Rc::new(NamedBuiltin {
+                            name: "add",
+                            this: Value::Set { values },
+                            f: builtins::set::add,
+                        }))),
+                        "remove" => Ok(Value::BuiltinFn(Rc::new(NamedBuiltin {
+                            name: "remove",
+                            this: Value::Set { values },
+                            f: builtins::set::remove,
+                        }))),
+                        "length" => Ok(Value::BuiltinFn(Rc::new(NamedBuiltin {
+                            name: "length",
+                            this: Value::Set { values },
+                            f: builtins::set::length,
+                        }))),
+                        _ => Ok(Value::Null),
+                    },
+                    Value::Dictionary { values } => match field.as_str() {
+                        "get" => Ok(Value::BuiltinFn(Rc::new(NamedBuiltin {
+                            name: "get",
+                            this: Value::Dictionary { values },
+                            f: builtins::dict::get,
+                        }))),
+                        "set" => Ok(Value::BuiltinFn(Rc::new(NamedBuiltin {
+                            name: "set",
+                            this: Value::Dictionary { values },
+                            f: builtins::dict::set,
+                        }))),
+                        "remove" => Ok(Value::BuiltinFn(Rc::new(NamedBuiltin {
+                            name: "remove",
+                            this: Value::Dictionary { values },
+                            f: builtins::dict::remove,
+                        }))),
+                        "items" => Ok(Value::BuiltinFn(Rc::new(NamedBuiltin {
+                            name: "items",
+                            this: Value::Dictionary { values },
+                            f: builtins::dict::items,
+                        }))),
+                        "keys" => Ok(Value::BuiltinFn(Rc::new(NamedBuiltin {
+                            name: "keys",
+                            this: Value::Dictionary { values },
+                            f: builtins::dict::keys,
+                        }))),
+                        "values" => Ok(Value::BuiltinFn(Rc::new(NamedBuiltin {
+                            name: "values",
+                            this: Value::Dictionary { values },
+                            f: builtins::dict::values,
+                        }))),
+                        "length" => Ok(Value::BuiltinFn(Rc::new(NamedBuiltin {
+                            name: "length",
+                            this: Value::Dictionary { values },
+                            f: builtins::dict::length,
+                        }))),
                         _ => Ok(Value::Null),
                     },
                     _ => Ok(Value::Null),
@@ -68,13 +186,14 @@ impl<'a, W: Write> Interpreter<'a, W> {
             }
             Expr::Number(n) => Ok(Value::Int32(*n)),
             Expr::String(s) => Ok(Value::String(s.clone())),
-            Expr::Array { values } => Ok({
+
+            Expr::Tuple { values } => Ok({
                 let values: Vec<_> = values
                     .iter()
                     .map(|e| self.eval_expr(e))
                     .collect::<Result<_, _>>()?;
 
-                Value::Array { values }
+                Value::Tuple { values }
             }),
 
             Expr::Identifier(name) => Ok(self
@@ -93,46 +212,7 @@ impl<'a, W: Write> Interpreter<'a, W> {
                 self.eval_unary_op(op, &val)
             }
 
-            Expr::Call { target, args } => match self.eval_expr(target) {
-                Ok(Value::Builtin(builtin)) => {
-                    let evaluated_args: Vec<_> = args
-                        .iter()
-                        .map(|e| self.eval_expr(e))
-                        .collect::<Result<_, _>>()?;
-                    Ok((builtin.run)(evaluated_args))
-                }
-                Ok(Value::Function {
-                    arguments,
-                    statement,
-                    scope,
-                }) => {
-                    if arguments.len() != args.len() {
-                        return Err(anyhow!(
-                            "Function expected {} args, got {}",
-                            arguments.len(),
-                            args.len()
-                        ));
-                    }
-
-                    let evaluated_args: Vec<_> = args
-                        .iter()
-                        .map(|e| self.eval_expr(e))
-                        .collect::<Result<_, _>>()?;
-
-                    let mut interpreter =
-                        Interpreter::new(VariableScope::branch(&scope), self.stdout);
-
-                    for (param, value) in arguments.iter().cloned().zip(evaluated_args) {
-                        interpreter.variables.declare(param, value);
-                    }
-
-                    match interpreter.eval_expr(&statement)? {
-                        Value::Return { value } => Ok(*value),
-                        other => Ok(other),
-                    }
-                }
-                _ => Err(anyhow!("Invalid function")),
-            },
+            Expr::Call { target, args } => self.eval_call(target, args),
             Expr::Function {
                 arguments,
                 statement,
@@ -148,8 +228,8 @@ impl<'a, W: Write> Interpreter<'a, W> {
             }),
 
             Expr::Block(statements) => {
-                let mut interpreter =
-                    Interpreter::new(VariableScope::branch(&self.variables), self.stdout);
+                let interpreter =
+                    Interpreter::new(VariableScope::branch(&self.variables), self.stdout.clone());
 
                 for statement in statements {
                     if let Ok(Value::Return { value }) = interpreter.execute_statement(statement) {
@@ -159,6 +239,49 @@ impl<'a, W: Write> Interpreter<'a, W> {
 
                 Ok(Value::Null)
             }
+        }
+    }
+
+    fn eval_call(&self, target: &Expr, args: &[Expr]) -> Result<Value> {
+        match self.eval_expr(target) {
+            Ok(Value::BuiltinFn(f)) => {
+                let evaluated_args: Vec<_> = args
+                    .iter()
+                    .map(|e| self.eval_expr(e))
+                    .collect::<Result<_, _>>()?;
+                f.call(evaluated_args.as_slice())
+            }
+            Ok(Value::Function {
+                arguments,
+                statement,
+                scope,
+            }) => {
+                if arguments.len() != args.len() {
+                    return Err(anyhow!(
+                        "Function expected {} args, got {}",
+                        arguments.len(),
+                        args.len()
+                    ));
+                }
+
+                let evaluated_args: Vec<_> = args
+                    .iter()
+                    .map(|e| self.eval_expr(e))
+                    .collect::<Result<_, _>>()?;
+
+                let interpreter =
+                    Interpreter::new(VariableScope::branch(&scope), self.stdout.clone());
+
+                for (param, value) in arguments.iter().cloned().zip(evaluated_args) {
+                    interpreter.variables.declare(param, value);
+                }
+
+                match interpreter.eval_expr(&statement)? {
+                    Value::Return { value } => Ok(*value),
+                    other => Ok(other),
+                }
+            }
+            _ => Err(anyhow!("Invalid function")),
         }
     }
 
@@ -189,28 +312,22 @@ impl<'a, W: Write> Interpreter<'a, W> {
         }
     }
 
-    fn execute_statements(&mut self, statements: &[Statement]) -> Result<Value> {
+    fn execute_statements(&self, statements: &[Statement]) -> Result<Value> {
         for stmt in statements {
             self.execute_statement(stmt)?;
         }
         Ok(Value::Null)
     }
 
-    // fn execute_statement(&mut self, stmt: &Statement) -> Result<()> {
-    fn execute_statement(&mut self, stmt: &Statement) -> Result<Value> {
+    fn execute_statement(&self, stmt: &Statement) -> Result<Value> {
         match stmt {
             Statement::Print(exprs) => {
                 let values: Result<Vec<_>> =
                     exprs.iter().map(|expr| self.eval_expr(expr)).collect();
                 let values = values?;
                 let output: Vec<String> = values.iter().map(|v| v.to_string()).collect();
-                write!(
-                    self.stdout,
-                    "{}{}",
-                    output.join(&self.output_field_separator),
-                    self.output_record_separator
-                )?;
-                self.stdout.flush()?;
+                writeln!(self.stdout.borrow_mut(), "{}", output.join(" "))?;
+                self.stdout.borrow_mut().flush()?;
                 Ok(Value::Null)
             }
             Statement::Assignment { target, op, value } => {
@@ -289,324 +406,5 @@ impl<'a, W: Write> Interpreter<'a, W> {
             }),
             Statement::Expression(expr) => self.eval_expr(expr),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::ast::parser::parse_program;
-
-    #[test]
-    fn test_basic() -> anyhow::Result<()> {
-        let mut buffer: Vec<u8> = Vec::new();
-        let program = parse_program({
-            "
-                let x = 123;
-                print(x);
-            "
-        })?;
-        Interpreter::new(VariableScope::new(), &mut buffer).run_program(&program)?;
-
-        assert_eq!(String::from_utf8(buffer)?, "123\n");
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_variable_scope() -> anyhow::Result<()> {
-        let mut buffer: Vec<u8> = Vec::new();
-        let program = parse_program({
-            "
-                let x = 1;
-                print(x); // 1
-                {
-                    print(x); // 1
-                    x = 4;
-                    print(x); // 4
-                }
-                print(x); // 4
-
-                {
-                    print(x); // 4
-                    x = 2;
-                    print(x); // 2
-                    let x = 42;
-                    print(x); // 42
-                    x = 3;
-                    print(x); // 3
-                    {
-                        print(x); // 3
-                        x = 100;
-                        print(x); // 100
-                        let x = 6;
-                        print(x); // 6
-                        x = 7;
-                        print(x); // 7
-                    }
-                    print(x); // 100
-                }
-                print(x); // 2
-            "
-        })?;
-        Interpreter::new(VariableScope::new(), &mut buffer).run_program(&program)?;
-
-        assert_eq!(
-            String::from_utf8(buffer)?,
-            [
-                "1", "1", "4", "4", "4", "2", "42", "3", "3", "100", "6", "7", "100", "2", ""
-            ]
-            .join("\n")
-        );
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_operators() -> anyhow::Result<()> {
-        let mut buffer: Vec<u8> = Vec::new();
-        let program = parse_program({
-            "
-                print(1 + 2); // 3
-                print(2 * 4); // 8
-                print(1 + 2 * 4); // 9
-                print((1+2)*4); // 12
-                print(10/5); // 2
-                print(-42); // -42
-                print(-42 - 2); // -44
-                print(-12/-6); // 2
-                print(-12/6); // -2
-                print(-(12/6 + 3)); // -5
-                print(3 * 2 * 5 * 10); // 300
-                print((1*2) + (3 * 4)); // 14
-                print(  ( 1    * 2) +(  3 *4)    ); // 14
-            "
-        })?;
-        Interpreter::new(VariableScope::new(), &mut buffer).run_program(&program)?;
-
-        assert_eq!(
-            String::from_utf8(buffer)?,
-            [
-                "3", "8", "9", "12", "2", "-42", "-44", "2", "-2", "-5", "300", "14", "14", ""
-            ]
-            .join("\n")
-        );
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_compare() -> anyhow::Result<()> {
-        let mut buffer: Vec<u8> = Vec::new();
-        let program = parse_program({
-            "
-                // equality
-                print(1 == 2); // false
-                print(2 == 2); // true
-
-                // inequality
-                print(3 != 3); // false
-                print(3 != 2); // true
-
-                // less-than / less-or-equal
-                print(1 <  2); // true
-                print(2 <  1); // false
-                print(2 <= 2); // true
-                print(3 <= 2); // false
-
-                // greater-than / greater-or-equal
-                print(3 >  2); // true
-                print(2 >  3); // false
-                print(2 >= 2); // true
-                print(1 >= 2); // false
-            "
-        })?;
-        Interpreter::new(VariableScope::new(), &mut buffer).run_program(&program)?;
-
-        let actual = String::from_utf8(buffer)?;
-
-        let expected = [
-            "false", "true", // equality
-            "false", "true", // inequality
-            "true", "false", "true", "false", // < / <=
-            "true", "false", "true", "false", // > / >=
-            "",
-        ]
-        .join("\n");
-
-        assert_eq!(actual, expected);
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_conditional() -> anyhow::Result<()> {
-        let mut buffer: Vec<u8> = Vec::new();
-        let program = parse_program({
-            r#"
-                let a = 100;
-
-                // Simple if (true)
-                if (a < 200) {
-                    print("1");
-                }
-
-                // Simple if (false)
-                if (a == 1) {
-                    print("2");
-                }
-
-                // if / else if / else chain
-                if (a == 50) {
-                    print("wrong-branch");
-                } else if (a == 100) {
-                    print("3");
-                } else {
-                    print("also-wrong");
-                }
-
-                // Nested conditionals
-                if (a < 200) {
-                    if (a > 50) {
-                        print("4");
-                    } else {
-                        print("wrong-nested");
-                    }
-                }
-
-                if (false) {
-                    print("wrong branch");
-                } else {
-                    print("5");
-                }
-            "#
-        })?;
-
-        Interpreter::new(VariableScope::new(), &mut buffer).run_program(&program)?;
-
-        let actual = String::from_utf8(buffer)?;
-
-        // expected output lines (with trailing newline accounted for)
-        let expected = [
-            "1", // from a < 200
-            // (no "2")
-            "3", // from else-if
-            "4", // from nested if
-            "5", // from else
-            "",  // trailing newline
-        ]
-        .join("\n");
-
-        assert_eq!(actual, expected);
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_functions() -> anyhow::Result<()> {
-        let mut buffer: Vec<u8> = Vec::new();
-        let program = parse_program({
-            r#"
-                let foo = fn(a, b, c) {
-                    return (a + b) * c;
-                };
-
-                let bar = fn(x, y) {
-                    let n = 42;
-                    return foo(x, x, y) + foo(y, x, x) + n;
-                };
-
-                let qux = fn(a, b, c, d, e, f) {
-                    let z = foo(a, b, c);
-                    return z + bar(e, f) + d;
-                };
-
-                print(qux(1, 2, 3, 4, 5, 6));
-            "#
-        })?;
-
-        Interpreter::new(VariableScope::new(), &mut buffer).run_program(&program)?;
-
-        let actual = String::from_utf8(buffer)?;
-
-        let expected = ["170", ""].join("\n");
-        assert_eq!(actual, expected);
-        Ok(())
-    }
-
-    #[test]
-    fn test_recursion() -> anyhow::Result<()> {
-        let mut buffer: Vec<u8> = Vec::new();
-        let program = parse_program({
-            r#"
-                let factorial = fn(n) {
-                    if (n == 0 || n == 1) {
-                        return 1;
-                    }
-
-                    return n * factorial(n-1);
-                };
-
-                print(factorial(12));
-            "#
-        })?;
-
-        Interpreter::new(VariableScope::new(), &mut buffer).run_program(&program)?;
-
-        let actual = String::from_utf8(buffer)?;
-
-        let expected = ["479001600", ""].join("\n");
-        assert_eq!(actual, expected);
-        Ok(())
-    }
-
-    #[test]
-    fn test_function_curry() -> anyhow::Result<()> {
-        let mut buffer: Vec<u8> = Vec::new();
-        let program = parse_program({
-            r#"
-                let foo = fn(a) {
-                return fn(b) {
-                    return a + b;
-                };
-                };
-
-                let addTen = foo(10);
-                let addFive = foo(5);
-
-                print(addTen(42));
-                print(addFive(42));
-                print(foo(2)(40));
-            "#
-        })?;
-
-        Interpreter::new(VariableScope::new(), &mut buffer).run_program(&program)?;
-
-        let actual = String::from_utf8(buffer)?;
-
-        let expected = ["52", "47", "42", ""].join("\n");
-        assert_eq!(actual, expected);
-        Ok(())
-    }
-
-    #[test]
-    fn test_array() -> anyhow::Result<()> {
-        let mut buffer: Vec<u8> = Vec::new();
-        let program = parse_program({
-            r#"
-                let x = [1,2,3];
-
-                print(x.sum());
-                print(x.join(">"));
-            "#
-        })?;
-
-        Interpreter::new(VariableScope::new(), &mut buffer).run_program(&program)?;
-
-        let actual = String::from_utf8(buffer)?;
-
-        let expected = ["6", "1>2>3", ""].join("\n");
-        assert_eq!(actual, expected);
-        Ok(())
     }
 }
