@@ -1,6 +1,7 @@
 use crate::ast::*;
 use anyhow::{Result, anyhow};
 use pest::Parser;
+use pest::error::InputLocation;
 use pest::iterators::{Pair, Pairs};
 use pest::pratt_parser::{Assoc, Op, PrattParser};
 
@@ -28,6 +29,24 @@ lazy_static::lazy_static! {
     };
 }
 
+pub fn underline_error(input: &str, err: &pest::error::Error<Rule>) -> String {
+    // Pretty-ish single-line underline using pest span, falling back to err.to_string()
+    if let InputLocation::Span((start, end)) = err.location.clone() {
+        let mut out = String::new();
+        out.push_str(input);
+        out.push('\n');
+        for i in 0..input.len() {
+            if i >= start && i < end {
+                out.push('^');
+            } else if input.is_char_boundary(i) {
+                out.push(' ');
+            }
+        }
+        return out;
+    }
+    err.to_string()
+}
+
 pub fn parse_program(input: &str) -> Result<Program> {
     let mut pairs = SludgeParser::parse(Rule::program, input)?;
     let program_pair = pairs.next().unwrap();
@@ -43,6 +62,13 @@ pub fn parse_program(input: &str) -> Result<Program> {
     }
 
     Ok(Program { statements })
+}
+
+pub fn parse_stmt(
+    input: &str,
+) -> Result<impl Iterator<Item = Result<Statement>>, Box<pest::error::Error<Rule>>> {
+    let pairs = SludgeParser::parse(Rule::statement, input)?;
+    Ok(pairs.map(|pair| parse_statement(pair)))
 }
 
 fn parse_exprs(pairs: Pairs<Rule>) -> Result<Expr> {

@@ -255,7 +255,7 @@ fn test_recursion() -> anyhow::Result<()> {
                 }
 
                 print(factorial(12))
-            "#
+        "#
     })?;
 
     Interpreter::new(VariableScope::new(), buffer.clone()).run_program(&program)?;
