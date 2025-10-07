@@ -319,7 +319,7 @@ impl Interpreter {
         Ok(Value::Null)
     }
 
-    fn execute_statement(&self, stmt: &Statement) -> Result<Value> {
+    pub fn execute_statement(&self, stmt: &Statement) -> Result<Value> {
         match stmt {
             Statement::Print(exprs) => {
                 let values: Result<Vec<_>> =
