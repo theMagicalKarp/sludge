@@ -77,8 +77,9 @@ make repl                     # Launch the REPL
 
 - Module System — Capability to import and link multiple .sludge files
 - Static Typing — Move towards optional or enforced type annotations
-- Better Error Handling — Using monads for composable and expressive error flow
-  (Monad (Wikipedia)
+- Better Error Handling — Using
+  [monads](https://en.wikipedia.org/wiki/Monad_(functional_programming)) for
+  composable and expressive error flow
 - Extended Types — Add float32, float64, u8, u32, u64, etc.
 - System Interaction — Expose process I/O and environment variables
 - Immutable by Default — Variables should be immutable unless explicitly
