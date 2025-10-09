@@ -4,21 +4,30 @@ use serde::Serialize;
 
 #[derive(Serialize, Debug, Clone)]
 pub enum Expr {
-    // Literal values
     Number(i32),
     String(String),
+    Boolean(bool),
 
     Tuple {
         values: Vec<Expr>,
     },
 
+    BinaryOp {
+        op: BinOp,
+        left: Box<Expr>,
+        right: Box<Expr>,
+    },
+
+    UnaryOp {
+        op: UnOp,
+        operand: Box<Expr>,
+    },
+
+    Identifier(String),
     Member {
         target: Box<Expr>,
         field: String,
     },
-
-    // Variable references
-    Identifier(String), // User-defined variables
 
     Block(Vec<Statement>),
 
@@ -30,19 +39,6 @@ pub enum Expr {
     Call {
         target: Box<Expr>,
         args: Vec<Expr>,
-    },
-
-    // Binary operations: arithmetic, comparison, logical
-    BinaryOp {
-        op: BinOp,
-        left: Box<Expr>,
-        right: Box<Expr>,
-    },
-
-    // Unary operations: negation, logical not
-    UnaryOp {
-        op: UnOp,
-        operand: Box<Expr>,
     },
 }
 
@@ -77,7 +73,6 @@ pub enum UnOp {
 
 #[derive(Serialize, Debug, Clone)]
 pub enum Statement {
-    // Variable assignment: x = 5, $1 = "hello", y += 3
     Assignment {
         target: AssignTarget,
         op: AssignOp,
@@ -90,12 +85,10 @@ pub enum Statement {
         value: Expr,
     },
 
-    // Print statement: print, print $1, print x, y, z
     Print(Vec<Expr>),
 
     Return(Expr),
 
-    // Control flow
     If {
         condition: Expr,
         then_stmt: Box<Expr>,
@@ -114,24 +107,21 @@ pub enum Statement {
         body: Box<Expr>,
     },
 
-    // Expression as statement (for side effects)
     Expression(Expr),
 }
 
-// Assignment targets: variables or field references
 #[derive(Serialize, Debug, Clone)]
 pub enum AssignTarget {
-    Identifier(String), // Regular variable: x = 5
+    Identifier(String),
 }
 
 // Assignment operators
 #[derive(Serialize, Debug, Clone)]
 pub enum AssignOp {
-    Assign, // =
+    Assign,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Program {
-    // pub rules: Vec<SludgeRule>, // All rules in the program
     pub statements: Vec<Statement>,
 }

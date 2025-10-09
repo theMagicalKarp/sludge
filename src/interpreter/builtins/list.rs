@@ -1,11 +1,68 @@
+use crate::ast::Expr;
 use crate::interpreter::Interpreter;
 use crate::interpreter::value::Value;
 use crate::interpreter::variable_scope::VariableScope;
 
-use anyhow::Error;
-use anyhow::Result;
+use anyhow::{Context, Error, Result, anyhow, bail};
 use std::cell::RefCell;
 use std::rc::Rc;
+
+fn expect_list(this: &Value, fname: &str) -> Result<Rc<RefCell<Vec<Value>>>> {
+    match this {
+        Value::List { values } => Ok(values.clone()),
+        other => bail!("{}: receiver is not a list (got {})", fname, other),
+    }
+}
+
+fn expect_n_args_at_least(args: &[Value], n: usize, fname: &str) -> Result<()> {
+    if args.len() < n {
+        bail!(
+            "{}: expected at least {} argument(s), got {}",
+            fname,
+            n,
+            args.len()
+        );
+    }
+    Ok(())
+}
+
+fn expect_index(args: &[Value], idx: usize, fname: &str) -> Result<usize> {
+    let v = args
+        .get(idx)
+        .ok_or_else(|| anyhow!("{}: missing index argument at position {}", fname, idx))?;
+    match v {
+        Value::Int32(i) if *i >= 0 => Ok(*i as usize),
+        Value::Int32(i) => bail!("{}: index must be non-negative, got {}", fname, i),
+        other => bail!("{}: index must be Int32, got {}", fname, other),
+    }
+}
+
+fn expect_callable<'a>(
+    args: &'a [Value],
+    fname: &str,
+) -> Result<(&'a Vec<String>, &'a Expr, &'a Rc<VariableScope>)> {
+    // matches your Value::Function shape
+    match args.first() {
+        Some(Value::Function {
+            arguments,
+            statement,
+            scope,
+        }) => Ok((arguments, statement, scope)),
+        Some(other) => bail!(
+            "{}: first argument must be a function, got {}",
+            fname,
+            other
+        ),
+        None => bail!("{}: missing function argument", fname),
+    }
+}
+
+fn expect_return(from: Value, fname: &str) -> Result<Value> {
+    match from {
+        Value::Return { value } => Ok(*value),
+        other => bail!("{fname}: function must `return` a value (got {other})"),
+    }
+}
 
 pub fn new(_this: &Value, args: &[Value]) -> Result<Value, Error> {
     Ok(Value::List {
@@ -14,206 +71,156 @@ pub fn new(_this: &Value, args: &[Value]) -> Result<Value, Error> {
 }
 
 pub fn join(this: &Value, args: &[Value]) -> Result<Value, Error> {
-    let delimiter: String = match args.first() {
-        Some(Value::String(s)) => s.clone(),
-        Some(v) => v.to_string(),
-        None => String::new(),
+    expect_n_args_at_least(args, 1, "join")?;
+    let delimiter = match &args[0] {
+        Value::String(s) => s.clone(),
+        other => other.to_string(),
     };
 
-    match this {
-        Value::List { values } => {
-            let joined = values
-                .borrow()
-                .iter()
-                .map(|v| v.to_string())
-                .collect::<Vec<_>>()
-                .join(&delimiter);
+    let values = expect_list(this, "join")?;
+    let joined = values
+        .borrow()
+        .iter()
+        .map(|v| v.to_string())
+        .collect::<Vec<_>>()
+        .join(&delimiter);
 
-            Ok(Value::String(joined))
-        }
-        _ => Ok(Value::Null),
-    }
+    Ok(Value::String(joined))
 }
 
 pub fn pop(this: &Value, _args: &[Value]) -> Result<Value, Error> {
-    match this {
-        Value::List { values } => Ok(match values.borrow_mut().pop() {
-            Some(v) => v,
-            _ => Value::Null,
-        }),
-        _ => Ok(Value::Null),
+    let values = expect_list(this, "pop")?;
+    let mut borrow = values.borrow_mut();
+    match borrow.pop() {
+        Some(v) => Ok(v),
+        None => bail!("pop: cannot pop from an empty list"),
     }
 }
 
 pub fn push(this: &Value, args: &[Value]) -> Result<Value, Error> {
-    match args.first() {
-        Some(arg) => match this {
-            Value::List { values } => {
-                values.borrow_mut().push(arg.clone());
-                Ok(Value::Null)
-            }
-            _ => Ok(Value::Null),
-        },
-        _ => Ok(Value::Null),
-    }
+    expect_n_args_at_least(args, 1, "push")?;
+    let values = expect_list(this, "push")?;
+    values.borrow_mut().extend_from_slice(args);
+    Ok(Value::Int32(values.borrow().len() as i32))
 }
 
 pub fn at(this: &Value, args: &[Value]) -> Result<Value, Error> {
-    let position: usize = match args.first() {
-        Some(Value::Int32(v)) => *v as usize,
-        _ => 0,
-    };
-
-    match this {
-        Value::List { values } => match values.borrow().get(position) {
-            Some(v) => Ok(v.clone()),
-            None => Ok(Value::Null),
-        },
-        _ => Ok(Value::Null),
+    let idx = expect_index(args, 0, "at")?;
+    let values = expect_list(this, "at")?;
+    match values.borrow().get(idx) {
+        Some(v) => Ok(v.clone()),
+        None => bail!(
+            "at: index {} out of bounds (len = {})",
+            idx,
+            values.borrow().len()
+        ),
     }
 }
 
 pub fn sum(this: &Value, _args: &[Value]) -> Result<Value, Error> {
-    match this {
-        Value::List { values } => Ok(values.borrow().iter().sum()),
-        _ => Ok(Value::Null),
-    }
+    let values = expect_list(this, "sum")?;
+    Ok(values.borrow().iter().sum())
 }
-
 pub fn map(interpreter: Rc<Interpreter>, this: &Value, args: &[Value]) -> Result<Value, Error> {
-    if let Some(Value::Function {
-        arguments,
-        statement,
-        scope,
-    }) = args.first()
-    {
-        if let Value::List { values } = this {
-            let values = values
-                .borrow()
-                .iter()
-                .map(|v| {
-                    let interpreter =
-                        Interpreter::new(VariableScope::branch(scope), interpreter.stdout.clone());
+    let (fn_args, stmt, scope) = expect_callable(args, "map")?;
+    let param = fn_args
+        .first()
+        .ok_or_else(|| anyhow!("map: function must accept at least 1 parameter"))?;
+    let values = expect_list(this, "map")?;
 
-                    interpreter
-                        .variables
-                        .declare(arguments.first().unwrap().clone(), v.clone());
+    let out: Result<Vec<Value>> = values
+        .borrow()
+        .iter()
+        .map(|v| {
+            let child = Interpreter::new(VariableScope::branch(scope), interpreter.stdout.clone());
+            child.variables.declare(param.clone(), v.clone());
 
-                    match interpreter.eval_expr(statement) {
-                        Ok(Value::Return { value }) => *value,
-                        _ => Value::Null,
-                    }
-                })
-                .collect();
-            let values = Rc::new(RefCell::new(values));
-            return Ok(Value::List { values });
-        }
-        return Ok(Value::Null);
-    }
+            let evaluated = child
+                .eval_expr(stmt)
+                .with_context(|| "map: function evaluation failed")?;
+            let ret = expect_return(evaluated, "map")?;
+            Ok(ret)
+        })
+        .collect();
 
-    Ok(Value::Null)
+    Ok(Value::List {
+        values: Rc::new(RefCell::new(out?)),
+    })
 }
 
 pub fn filter(interpreter: Rc<Interpreter>, this: &Value, args: &[Value]) -> Result<Value, Error> {
-    if let Some(Value::Function {
-        arguments,
-        statement,
-        scope,
-    }) = args.first()
-    {
-        if let Value::List { values } = this {
-            let values = values
-                .borrow()
-                .iter()
-                .filter(|&v| {
-                    let interpreter =
-                        Interpreter::new(VariableScope::branch(scope), interpreter.stdout.clone());
+    let (fn_args, stmt, scope) = expect_callable(args, "filter")?;
+    let param = fn_args
+        .first()
+        .ok_or_else(|| anyhow!("filter: function must accept at least 1 parameter"))?;
+    let values = expect_list(this, "filter")?;
 
-                    interpreter
-                        .variables
-                        .declare(arguments.first().unwrap().clone(), v.clone());
+    let mut out = Vec::new();
+    for v in values.borrow().iter() {
+        let child = Interpreter::new(VariableScope::branch(scope), interpreter.stdout.clone());
+        child.variables.declare(param.clone(), v.clone());
 
-                    match interpreter.eval_expr(statement) {
-                        Ok(Value::Return { value }) => value.is_truthy(),
-                        _ => false,
-                    }
-                })
-                .cloned()
-                .collect();
-            let values = Rc::new(RefCell::new(values));
-            return Ok(Value::List { values });
+        let evaluated = child
+            .eval_expr(stmt)
+            .with_context(|| "filter: function evaluation failed")?;
+        let ret = expect_return(evaluated, "filter")?;
+        if ret.is_truthy() {
+            out.push(v.clone());
         }
-        return Ok(Value::Null);
     }
 
-    Ok(Value::Null)
+    Ok(Value::List {
+        values: Rc::new(RefCell::new(out)),
+    })
 }
 
 pub fn all(interpreter: Rc<Interpreter>, this: &Value, args: &[Value]) -> Result<Value, Error> {
-    if let Some(Value::Function {
-        arguments,
-        statement,
-        scope,
-    }) = args.first()
-    {
-        if let Value::List { values } = this {
-            let result = values.borrow().iter().all(|v| {
-                let interpreter =
-                    Interpreter::new(VariableScope::branch(scope), interpreter.stdout.clone());
+    let (fn_args, stmt, scope) = expect_callable(args, "all")?;
+    let param = fn_args
+        .first()
+        .ok_or_else(|| anyhow!("all: function must accept at least 1 parameter"))?;
+    let values = expect_list(this, "all")?;
 
-                interpreter
-                    .variables
-                    .declare(arguments.first().unwrap().clone(), v.clone());
+    for v in values.borrow().iter() {
+        let child = Interpreter::new(VariableScope::branch(scope), interpreter.stdout.clone());
+        child.variables.declare(param.clone(), v.clone());
 
-                match interpreter.eval_expr(statement) {
-                    Ok(Value::Return { value }) => value.is_truthy(),
-                    _ => false,
-                }
-            });
-
-            return Ok(Value::Boolean(result));
+        let evaluated = child
+            .eval_expr(stmt)
+            .with_context(|| "all: function evaluation failed")?;
+        let ret = expect_return(evaluated, "all")?;
+        if !ret.is_truthy() {
+            return Ok(Value::Boolean(false));
         }
-        return Ok(Value::Null);
     }
-
-    Ok(Value::Null)
+    Ok(Value::Boolean(true))
 }
 
 pub fn any(interpreter: Rc<Interpreter>, this: &Value, args: &[Value]) -> Result<Value, Error> {
-    if let Some(Value::Function {
-        arguments,
-        statement,
-        scope,
-    }) = args.first()
-    {
-        if let Value::List { values } = this {
-            let result = values.borrow().iter().any(|v| {
-                let interpreter =
-                    Interpreter::new(VariableScope::branch(scope), interpreter.stdout.clone());
+    let (fn_args, stmt, scope) = expect_callable(args, "any")?;
+    let param = fn_args
+        .first()
+        .ok_or_else(|| anyhow!("any: function must accept at least 1 parameter"))?;
+    let values = expect_list(this, "any")?;
 
-                interpreter
-                    .variables
-                    .declare(arguments.first().unwrap().clone(), v.clone());
+    for v in values.borrow().iter() {
+        let child = Interpreter::new(VariableScope::branch(scope), interpreter.stdout.clone());
+        child.variables.declare(param.clone(), v.clone());
 
-                match interpreter.eval_expr(statement) {
-                    Ok(Value::Return { value }) => value.is_truthy(),
-                    _ => false,
-                }
-            });
-
-            return Ok(Value::Boolean(result));
+        let evaluated = child
+            .eval_expr(stmt)
+            .with_context(|| "any: function evaluation failed")?;
+        let ret = expect_return(evaluated, "any")?;
+        if ret.is_truthy() {
+            return Ok(Value::Boolean(true));
         }
-        return Ok(Value::Null);
     }
-
-    Ok(Value::Null)
+    Ok(Value::Boolean(false))
 }
 
 pub fn length(this: &Value, _args: &[Value]) -> Result<Value, Error> {
-    match this {
-        Value::List { values } => Ok(Value::Int32(values.borrow().len() as i32)),
-        _ => Ok(Value::Null),
-    }
+    let values = expect_list(this, "length")?;
+    Ok(Value::Int32(values.borrow().len() as i32))
 }
 
 // TODO:
