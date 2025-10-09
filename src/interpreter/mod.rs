@@ -11,15 +11,14 @@ use crate::interpreter::value::Value;
 
 use crate::interpreter::variable_scope::VariableScope;
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use std::cell::RefCell;
 use std::io::Write;
 use std::rc::Rc;
 
 pub struct Interpreter {
-    variables: Rc<VariableScope>,
-
-    stdout: Rc<RefCell<dyn Write>>,
+    pub(crate) variables: Rc<VariableScope>,
+    pub(crate) stdout: Rc<RefCell<dyn Write>>,
 }
 
 impl Interpreter {
@@ -29,6 +28,42 @@ impl Interpreter {
 
     pub fn run_program(&self, program: &Program) -> Result<Value> {
         self.execute_statements(&program.statements)
+    }
+
+    fn type_name(v: &Value) -> &'static str {
+        match v {
+            Value::Null => "null",
+            Value::Boolean(_) => "boolean",
+            Value::Int32(_) => "int",
+            Value::String(_) => "string",
+            Value::Tuple { .. } => "tuple",
+            Value::List { .. } => "list",
+            Value::Set { .. } => "set",
+            Value::Dictionary { .. } => "dict",
+            Value::Function { .. } => "function",
+            Value::BuiltinFn(_) => "builtin",
+            Value::Return { .. } => "return",
+        }
+    }
+
+    fn eval_binary_op(&self, op: &BinOp, left: &Value, right: &Value) -> Result<Value> {
+        match op {
+            BinOp::Add => left.clone() + right.clone(),
+            BinOp::Sub => left.clone() - right.clone(),
+            BinOp::Mul => left.clone() * right.clone(),
+            BinOp::Div => left.clone() / right.clone(),
+            BinOp::Mod => left.clone() % right.clone(),
+            BinOp::Pow => left.clone().pow(right.clone()),
+
+            BinOp::Eq => Ok(Value::Boolean(left == right)),
+            BinOp::Ne => Ok(Value::Boolean(left != right)),
+            BinOp::Lt => Ok(Value::Boolean(left < right)),
+            BinOp::Le => Ok(Value::Boolean(left <= right)),
+            BinOp::Gt => Ok(Value::Boolean(left > right)),
+            BinOp::Ge => Ok(Value::Boolean(left >= right)),
+            BinOp::And => Ok(Value::Boolean(left.is_truthy() && right.is_truthy())),
+            BinOp::Or => Ok(Value::Boolean(left.is_truthy() || right.is_truthy())),
+        }
     }
 
     fn eval_expr(&self, expr: &Expr) -> Result<Value> {
@@ -103,7 +138,7 @@ impl Interpreter {
                             this: Value::List { values },
                             f: builtins::list::sum,
                         }))),
-                        _ => Ok(Value::Null),
+                        other => bail!("unknown member '{}' on type list", other),
                     },
                     Value::Set { values } => match field.as_str() {
                         "has" => Ok(Value::BuiltinFn(Rc::new(NamedBuiltin {
@@ -141,7 +176,7 @@ impl Interpreter {
                             this: Value::Set { values },
                             f: builtins::set::length,
                         }))),
-                        _ => Ok(Value::Null),
+                        other => bail!("unknown member '{}' on type set", other),
                     },
                     Value::Dictionary { values } => match field.as_str() {
                         "get" => Ok(Value::BuiltinFn(Rc::new(NamedBuiltin {
@@ -179,33 +214,40 @@ impl Interpreter {
                             this: Value::Dictionary { values },
                             f: builtins::dict::length,
                         }))),
-                        _ => Ok(Value::Null),
+                        other => bail!("unknown member '{}' on type dict", other),
                     },
-                    _ => Ok(Value::Null),
+                    other => bail!(
+                        "member access not supported: type '{}' has no members",
+                        Self::type_name(&other)
+                    ),
                 }
             }
+
             Expr::Number(n) => Ok(Value::Int32(*n)),
             Expr::String(s) => Ok(Value::String(s.clone())),
+            Expr::Boolean(b) => Ok(Value::Boolean(*b)),
 
             Expr::Tuple { values } => Ok({
                 let values: Vec<_> = values
                     .iter()
                     .map(|e| self.eval_expr(e))
                     .collect::<Result<_, _>>()?;
-
                 Value::Tuple { values }
             }),
 
-            Expr::Identifier(name) => Ok(self
+            Expr::Identifier(name) => self
                 .variables
                 .get(name)
-                .unwrap_or(Value::String("".to_string()))),
+                .ok_or_else(|| anyhow!("undefined variable '{}'", name)),
 
-            Expr::BinaryOp { op, left, right } => {
-                let lval = self.eval_expr(left)?;
-                let rval = self.eval_expr(right)?;
-                self.eval_binary_op(op, &lval, &rval)
-            }
+            Expr::BinaryOp { op, left, right } => match op {
+                BinOp::And | BinOp::Or => self.eval_logical_op(op, left, right),
+                _ => {
+                    let lval = self.eval_expr(left)?;
+                    let rval = self.eval_expr(right)?;
+                    self.eval_binary_op(op, &lval, &rval)
+                }
+            },
 
             Expr::UnaryOp { op, operand } => {
                 let val = self.eval_expr(operand)?;
@@ -213,6 +255,7 @@ impl Interpreter {
             }
 
             Expr::Call { target, args } => self.eval_call(target, args),
+
             Expr::Function {
                 arguments,
                 statement,
@@ -243,25 +286,25 @@ impl Interpreter {
     }
 
     fn eval_call(&self, target: &Expr, args: &[Expr]) -> Result<Value> {
-        match self.eval_expr(target) {
-            Ok(Value::BuiltinFn(f)) => {
+        match self.eval_expr(target)? {
+            Value::BuiltinFn(f) => {
                 let evaluated_args: Vec<_> = args
                     .iter()
                     .map(|e| self.eval_expr(e))
                     .collect::<Result<_, _>>()?;
                 f.call(evaluated_args.as_slice())
             }
-            Ok(Value::Function {
+            Value::Function {
                 arguments,
                 statement,
                 scope,
-            }) => {
+            } => {
                 if arguments.len() != args.len() {
-                    return Err(anyhow!(
-                        "Function expected {} args, got {}",
+                    bail!(
+                        "function expected {} argument(s), got {}",
                         arguments.len(),
                         args.len()
-                    ));
+                    );
                 }
 
                 let evaluated_args: Vec<_> = args
@@ -276,32 +319,48 @@ impl Interpreter {
                     interpreter.variables.declare(param, value);
                 }
 
-                match interpreter.eval_expr(&statement)? {
+                let result = interpreter
+                    .eval_expr(&statement)
+                    .with_context(|| "function evaluation failed")?;
+
+                match result {
                     Value::Return { value } => Ok(*value),
-                    other => Ok(other),
+                    other => bail!(
+                        "function must `return` a value (got {} of type {})",
+                        other,
+                        Self::type_name(&other)
+                    ),
                 }
             }
-            _ => Err(anyhow!("Invalid function")),
+            other => bail!(
+                "call target is not callable (got type {})",
+                Self::type_name(&other)
+            ),
         }
     }
 
-    fn eval_binary_op(&self, op: &BinOp, left: &Value, right: &Value) -> Result<Value> {
-        match op {
-            BinOp::Add => left.clone() + right.clone(),
-            BinOp::Sub => left.clone() - right.clone(),
-            BinOp::Mul => left.clone() * right.clone(),
-            BinOp::Div => left.clone() / right.clone(),
-            BinOp::Mod => left.clone() % right.clone(),
-            BinOp::Pow => left.clone().pow(right.clone()),
+    fn eval_logical_op(&self, op: &BinOp, left: &Expr, right: &Expr) -> Result<Value> {
+        let lval = self.eval_expr(left)?;
+        let lbool = lval.is_truthy();
 
-            BinOp::Eq => Ok(Value::Boolean(left == right)),
-            BinOp::Ne => Ok(Value::Boolean(left != right)),
-            BinOp::Lt => Ok(Value::Boolean(left < right)),
-            BinOp::Le => Ok(Value::Boolean(left <= right)),
-            BinOp::Gt => Ok(Value::Boolean(left > right)),
-            BinOp::Ge => Ok(Value::Boolean(left >= right)),
-            BinOp::And => Ok(Value::Boolean(left.is_truthy() && right.is_truthy())),
-            BinOp::Or => Ok(Value::Boolean(left.is_truthy() || right.is_truthy())),
+        match op {
+            BinOp::And => {
+                // short-circuit: if left is false, return immediately
+                if !lbool {
+                    return Ok(Value::Boolean(false));
+                }
+                let rval = self.eval_expr(right)?;
+                Ok(Value::Boolean(rval.is_truthy()))
+            }
+            BinOp::Or => {
+                // short-circuit: if left is true, return immediately
+                if lbool {
+                    return Ok(Value::Boolean(true));
+                }
+                let rval = self.eval_expr(right)?;
+                Ok(Value::Boolean(rval.is_truthy()))
+            }
+            _ => unreachable!("eval_logical_op called with non-logical operator"),
         }
     }
 
@@ -372,7 +431,9 @@ impl Interpreter {
             }
             Statement::While { condition, body } => {
                 while self.eval_expr(condition)?.is_truthy() {
-                    self.eval_expr(body)?;
+                    if let Value::Return { value } = self.eval_expr(body)? {
+                        return Ok(Value::Return { value });
+                    }
                 }
                 Ok(Value::Null)
             }
@@ -391,9 +452,11 @@ impl Interpreter {
                         && !self.eval_expr(cond)?.is_truthy()
                     {
                         break;
-                    }
+                    };
 
-                    self.eval_expr(body)?;
+                    if let Value::Return { value } = self.eval_expr(body)? {
+                        return Ok(Value::Return { value });
+                    }
 
                     if let Some(update_stmt) = update {
                         self.execute_statement(update_stmt)?;

@@ -1,14 +1,14 @@
 WHITESPACE = _{ " " | "\t" | "\n" | "\r" }
 COMMENT    = _{ "//" ~ (!"\n" ~ ANY)* }
 
-// Numbers support both integers and floating-point
-number = @{ ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT*)? }
-
-// Strings are double-quoted (Note: AWK also supports single quotes, but we'll keep it simple)
-string = @{ "\"" ~ (!"\"" ~ ANY)* ~ "\"" }
+number  = @{ ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT*)? }
+string  = @{ "\"" ~ (!"\"" ~ ANY)* ~ "\"" }
+true    =  { "true" }
+false   =  { "false" }
+boolean =  { true | false }
 
 // Identifiers start with letter or underscore, contain alphanumeric or underscore
-identifier    = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
+identifier    = @{ !("true" | "false") ~ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
 member_access =  { "." ~ identifier }
 
 type_expr    = { type_primary ~ array_suffix* }
@@ -56,6 +56,7 @@ return_stmt = { "return" ~ expr? }
 primary = _{
     number
   | string
+  | boolean
   | function_literal
   | tuple_expr
   | block

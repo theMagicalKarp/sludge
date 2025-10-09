@@ -21,6 +21,34 @@ fn test_basic() -> anyhow::Result<()> {
 }
 
 #[test]
+fn test_bools() -> anyhow::Result<()> {
+    let buffer: Rc<RefCell<Vec<u8>>> = Rc::new(RefCell::new(Vec::new()));
+    let program = parse_program({
+        "
+            print(true)
+            print(false)
+            print(true && true)
+            print(true && false)
+            print(false && false)
+            print(true || true)
+            print(true || false)
+            print(false || false)
+        "
+    })?;
+    Interpreter::new(VariableScope::new(), buffer.clone()).run_program(&program)?;
+
+    assert_eq!(
+        String::from_utf8(buffer.borrow().to_vec())?,
+        [
+            "true", "false", "true", "false", "false", "true", "true", "false", ""
+        ]
+        .join("\n")
+    );
+
+    Ok(())
+}
+
+#[test]
 fn test_variable_scope() -> anyhow::Result<()> {
     let buffer: Rc<RefCell<Vec<u8>>> = Rc::new(RefCell::new(Vec::new()));
     let program = parse_program({
@@ -536,6 +564,85 @@ fn test_set_mutations() -> anyhow::Result<()> {
         "3", "true", "false", "true", "false", "true", // x.remove(2)
         "3", "true", "false", "true", "false", "true", // x.remove(4)
         "",     // end of program
+    ]
+    .join("\n");
+    assert_eq!(actual, expected);
+    Ok(())
+}
+
+#[test]
+fn test_ensure_return_short_circuit() -> anyhow::Result<()> {
+    let buffer: Rc<RefCell<Vec<u8>>> = Rc::new(RefCell::new(Vec::new()));
+    let program = parse_program({
+        r#"
+            let f = fn() {
+            for (let i = 0; i < 10; i = i + 1) {
+                if (i > 3) {
+                return "should happen"
+                }
+                print(i)
+            }
+
+            return "should not happen"
+            }
+
+
+            let g = fn() {
+            let i = 0
+            while (i < 10) {
+                print(i)
+                if (i > 3) {
+                return "should happen"
+                }
+                i = i + 1
+            }
+            return "should not happen"
+            }
+
+            let isGreaterThanTen = fn(a) {
+            if (a > 10) {
+                return "is greater than 10"
+            } else if (a == 10) {
+                return "is not greater than 10, but is 10"
+            } else {
+                if (a == -10) {
+                return "is not greater than 10, but is -10"
+                }
+            }
+            return "is not greater than 10"
+            }
+
+            print(f())
+            print(g())
+            print(isGreaterThanTen(1))
+            print(isGreaterThanTen(10))
+            print(isGreaterThanTen(11))
+            print(isGreaterThanTen(-10))
+
+        "#
+    })?;
+
+    Interpreter::new(VariableScope::new(), buffer.clone()).run_program(&program)?;
+
+    let actual = String::from_utf8(buffer.borrow().to_vec())?;
+
+    let expected = [
+        "0",
+        "1",
+        "2",
+        "3",
+        "should happen",
+        "0",
+        "1",
+        "2",
+        "3",
+        "4",
+        "should happen",
+        "is not greater than 10",
+        "is not greater than 10, but is 10",
+        "is greater than 10",
+        "is not greater than 10, but is -10",
+        "",
     ]
     .join("\n");
     assert_eq!(actual, expected);

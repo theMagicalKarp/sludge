@@ -20,17 +20,16 @@ lazy_static::lazy_static! {
             .op(Op::infix(logical_and, Left)) // &&
             .op(Op::infix(eq, Left) | Op::infix(ne, Left)) // == !=
             .op(Op::infix(le, Left) | Op::infix(ge, Left) | Op::infix(lt, Left) | Op::infix(gt, Left)) // <= >= < >
-            .op(Op::infix(add, Left) | Op::infix(subtract, Left)) // + -
+            .op(Op::infix(add, Left) | Op::infix(subtract, Left))  // + -
             .op(Op::infix(multiply, Left) | Op::infix(divide, Left) | Op::infix(modulo, Left)) // * / %
-            .op(Op::infix(power, Right)) // ^ ** (right-associative)
+            .op(Op::infix(power, Right))           // ^ or **
             // Highest precedence
-            .op(Op::prefix(logical_not) | Op::prefix(unary_minus)) // ! - (unary)
+            .op(Op::prefix(logical_not) | Op::prefix(unary_minus)) // ! -
             .op(Op::postfix(member_access) | Op::postfix(call_suffix))
     };
 }
 
 pub fn underline_error(input: &str, err: &pest::error::Error<Rule>) -> String {
-    // Pretty-ish single-line underline using pest span, falling back to err.to_string()
     if let InputLocation::Span((start, end)) = err.location.clone() {
         let mut out = String::new();
         out.push_str(input);
@@ -42,9 +41,10 @@ pub fn underline_error(input: &str, err: &pest::error::Error<Rule>) -> String {
                 out.push(' ');
             }
         }
-        return out;
+        out
+    } else {
+        err.to_string()
     }
-    err.to_string()
 }
 
 pub fn parse_program(input: &str) -> Result<Program> {
@@ -55,9 +55,7 @@ pub fn parse_program(input: &str) -> Result<Program> {
     for pair in program_pair.into_inner() {
         match pair.as_rule() {
             Rule::EOI => {}
-            _ => {
-                statements.push(parse_statement(pair)?);
-            }
+            _ => statements.push(parse_statement(pair)?),
         };
     }
 
@@ -75,7 +73,6 @@ fn parse_exprs(pairs: Pairs<Rule>) -> Result<Expr> {
     PRATT_PARSER
         .map_primary(parse_expr)
         .map_infix(|lhs, op, rhs| {
-            // Handle binary operations
             let bin_op = match op.as_rule() {
                 Rule::add => BinOp::Add,
                 Rule::subtract => BinOp::Sub,
@@ -114,19 +111,17 @@ fn parse_exprs(pairs: Pairs<Rule>) -> Result<Expr> {
             let target = Box::new(lhs?);
             match postfix.as_rule() {
                 Rule::call_suffix => {
-                    // `arg_list` is a silent rule, so we get expr pairs directly.
                     let args = postfix
                         .into_inner()
-                        .map(|p| parse_expr(p))
+                        .map(parse_expr)
                         .collect::<Result<Vec<_>, _>>()?;
                     Ok(Expr::Call { target, args })
                 }
                 Rule::member_access => {
-                    // "." ~ identifier
                     let field = postfix
                         .into_inner()
                         .next()
-                        .ok_or_else(|| anyhow!("missing field name in member access"))?
+                        .ok_or_else(|| anyhow!("Missing field name in member access"))?
                         .as_str()
                         .to_string();
                     Ok(Expr::Member { target, field })
@@ -139,10 +134,17 @@ fn parse_exprs(pairs: Pairs<Rule>) -> Result<Expr> {
 
 fn parse_expr(primary: Pair<Rule>) -> Result<Expr> {
     match primary.as_rule() {
-        Rule::number => Ok(Expr::Number(primary.as_str().parse().unwrap())),
+        Rule::number => Ok(Expr::Number(primary.as_str().parse()?)),
+        Rule::boolean => {
+            let text = primary.as_str();
+            match text {
+                "true" => Ok(Expr::Boolean(true)),
+                "false" => Ok(Expr::Boolean(false)),
+                _ => Err(anyhow!("Invalid boolean literal: {}", text)),
+            }
+        }
         Rule::string => {
             let s = primary.as_str();
-            // Remove surrounding quotes
             Ok(Expr::String(s[1..s.len() - 1].to_string()))
         }
         Rule::identifier => Ok(Expr::Identifier(primary.as_str().to_string())),
@@ -163,14 +165,14 @@ fn parse_expr(primary: Pair<Rule>) -> Result<Expr> {
                     arguments,
                     statement,
                 }),
-                _ => Err(anyhow!("Statement not found!")),
+                None => Err(anyhow!("Function literal missing body")),
             }
         }
         Rule::tuple_expr => {
-            let mut values = Vec::new();
-            for inner in primary.into_inner() {
-                values.push(parse_expr(inner)?);
-            }
+            let values = primary
+                .into_inner()
+                .map(parse_expr)
+                .collect::<Result<Vec<_>>>()?;
             Ok(Expr::Tuple { values })
         }
         Rule::block => {
@@ -180,11 +182,8 @@ fn parse_expr(primary: Pair<Rule>) -> Result<Expr> {
             }
             Ok(Expr::Block(statements))
         }
-        Rule::expr => {
-            // Parenthesized expression
-            parse_exprs(primary.into_inner())
-        }
-        _ => Err(anyhow!("Unexpected primary: {:?}", primary)),
+        Rule::expr => parse_exprs(primary.into_inner()),
+        _ => Err(anyhow!("Unexpected primary: {:?}", primary.as_rule())),
     }
 }
 
@@ -196,71 +195,121 @@ fn parse_statement(pair: Pair<Rule>) -> Result<Statement> {
                 if inner.as_rule() == Rule::print_args {
                     for arg_pair in inner.into_inner() {
                         if arg_pair.as_rule() == Rule::expr {
-                            exprs.push(parse_exprs(arg_pair.into_inner())?);
+                            exprs.push(
+                                parse_exprs(arg_pair.into_inner()).map_err(|e| {
+                                    anyhow!("Failed to parse print argument: {}", e)
+                                })?,
+                            );
                         }
                     }
                 }
             }
             Ok(Statement::Print(exprs))
         }
+
         Rule::assignment => {
             let mut inner = pair.into_inner();
-            let target_pair = inner.next().unwrap();
-            let op_pair = inner.next().unwrap();
-            let value_pair = inner.next().unwrap();
+            let target_pair = inner
+                .next()
+                .ok_or_else(|| anyhow!("Missing assignment target"))?;
+            let op_pair = inner
+                .next()
+                .ok_or_else(|| anyhow!("Missing assignment operator"))?;
+            let value_pair = inner
+                .next()
+                .ok_or_else(|| anyhow!("Missing assignment value"))?;
 
             let target = match target_pair.as_rule() {
                 Rule::identifier => AssignTarget::Identifier(target_pair.as_str().to_string()),
-                _ => return Err(anyhow!("Invalid assignment target")),
+                other => {
+                    return Err(anyhow!(
+                        "Invalid assignment target: expected identifier, got {:?}",
+                        other
+                    ));
+                }
             };
 
             let op = match op_pair.as_rule() {
                 Rule::assign => AssignOp::Assign,
-                _ => return Err(anyhow!("Invalid assignment operator")),
+                other => {
+                    return Err(anyhow!(
+                        "Invalid assignment operator: expected '=', got {:?}",
+                        other
+                    ));
+                }
             };
 
-            let value = parse_exprs(value_pair.into_inner())?;
+            let value = parse_exprs(value_pair.into_inner())
+                .map_err(|e| anyhow!("Failed to parse assignment value: {}", e))?;
 
             Ok(Statement::Assignment { target, op, value })
         }
 
         Rule::declaration => {
             let mut inner = pair.into_inner();
-            let target_pair = inner.next().unwrap();
-            let op_pair = inner.next().unwrap();
-            let value_pair = inner.next().unwrap();
+            let target_pair = inner
+                .next()
+                .ok_or_else(|| anyhow!("Missing declaration target"))?;
+            let op_pair = inner
+                .next()
+                .ok_or_else(|| anyhow!("Missing declaration operator"))?;
+            let value_pair = inner
+                .next()
+                .ok_or_else(|| anyhow!("Missing declaration value"))?;
+
             let target = match target_pair.as_rule() {
                 Rule::identifier => AssignTarget::Identifier(target_pair.as_str().to_string()),
-                _ => return Err(anyhow!("Invalid assignment target")),
+                other => {
+                    return Err(anyhow!(
+                        "Invalid declaration target: expected identifier, got {:?}",
+                        other
+                    ));
+                }
             };
 
             let op = match op_pair.as_rule() {
                 Rule::assign => AssignOp::Assign,
-                _ => return Err(anyhow!("Invalid assignment operator")),
+                other => {
+                    return Err(anyhow!(
+                        "Invalid declaration operator: expected '=', got {:?}",
+                        other
+                    ));
+                }
             };
 
-            let value = parse_expr(value_pair)?;
+            let value = parse_expr(value_pair)
+                .map_err(|e| anyhow!("Failed to parse declaration value: {}", e))?;
 
             Ok(Statement::Declaration { target, op, value })
         }
 
         Rule::if_stmt => {
             let mut inner = pair.into_inner();
-            let condition_pair = inner.next().unwrap();
-            let condition = parse_expr(condition_pair)?;
 
-            // Parse the 'then' block
-            let then_pair = inner.next().unwrap();
-            let then_stmt = Box::new(parse_expr(then_pair)?);
+            let condition_pair = inner
+                .next()
+                .ok_or_else(|| anyhow!("Missing condition in if-statement"))?;
+            let condition = parse_expr(condition_pair)
+                .map_err(|e| anyhow!("Failed to parse if-condition: {}", e))?;
 
-            // Handle optional 'else' clause
+            let then_pair = inner
+                .next()
+                .ok_or_else(|| anyhow!("Missing 'then' block in if-statement"))?;
+            let then_stmt = Box::new(
+                parse_expr(then_pair)
+                    .map_err(|e| anyhow!("Failed to parse 'then' block: {}", e))?,
+            );
+
             let else_stmt = if let Some(else_pair) = inner.next() {
                 match else_pair.as_rule() {
-                    // Recursive "else if"
                     Rule::if_stmt => Some(Box::new(Expr::Block(vec![parse_statement(else_pair)?]))),
-                    // Regular "else { ... }"
                     Rule::block => Some(Box::new(parse_expr(else_pair)?)),
-                    _ => return Err(anyhow!("Invalid else clause")),
+                    other => {
+                        return Err(anyhow!(
+                            "Invalid else clause: expected 'if' or block, got {:?}",
+                            other
+                        ));
+                    }
                 }
             } else {
                 None
@@ -275,11 +324,23 @@ fn parse_statement(pair: Pair<Rule>) -> Result<Statement> {
 
         Rule::while_stmt => {
             let mut inner = pair.into_inner();
-            let condition_pair = inner.next().unwrap();
-            let condition = parse_exprs(condition_pair.into_inner())?;
-            let body = Box::new(parse_expr(inner.next().unwrap())?);
+
+            let condition_pair = inner
+                .next()
+                .ok_or_else(|| anyhow!("Missing condition in while loop"))?;
+            let condition = parse_exprs(condition_pair.into_inner())
+                .map_err(|e| anyhow!("Failed to parse while condition: {}", e))?;
+
+            let body_pair = inner
+                .next()
+                .ok_or_else(|| anyhow!("Missing body in while loop"))?;
+            let body = Box::new(
+                parse_expr(body_pair).map_err(|e| anyhow!("Failed to parse while body: {}", e))?,
+            );
+
             Ok(Statement::While { condition, body })
         }
+
         Rule::for_stmt => {
             let inner = pair.into_inner();
 
@@ -290,27 +351,34 @@ fn parse_statement(pair: Pair<Rule>) -> Result<Statement> {
 
             for part in inner {
                 match part.as_rule() {
-                    Rule::assignment => {
+                    Rule::assignment | Rule::declaration => {
                         if init.is_none() {
-                            init = Some(Box::new(parse_statement(part)?));
+                            init = Some(Box::new(
+                                parse_statement(part)
+                                    .map_err(|e| anyhow!("Failed to parse for-init: {}", e))?,
+                            ));
                         } else {
-                            update = Some(Box::new(parse_statement(part)?));
-                        }
-                    }
-                    Rule::declaration => {
-                        if init.is_none() {
-                            init = Some(Box::new(parse_statement(part)?));
-                        } else {
-                            update = Some(Box::new(parse_statement(part)?));
+                            update = Some(Box::new(
+                                parse_statement(part)
+                                    .map_err(|e| anyhow!("Failed to parse for-update: {}", e))?,
+                            ));
                         }
                     }
                     Rule::expr => {
-                        condition = Some(parse_exprs(part.into_inner())?);
+                        condition = Some(
+                            parse_exprs(part.into_inner())
+                                .map_err(|e| anyhow!("Failed to parse for-condition: {}", e))?,
+                        );
                     }
                     Rule::block => {
-                        body = Some(Box::new(parse_expr(part)?));
+                        body = Some(Box::new(
+                            parse_expr(part)
+                                .map_err(|e| anyhow!("Failed to parse for-body: {}", e))?,
+                        ));
                     }
-                    _ => {}
+                    other => {
+                        return Err(anyhow!("Unexpected element in for loop: {:?}", other));
+                    }
                 }
             }
 
@@ -321,11 +389,23 @@ fn parse_statement(pair: Pair<Rule>) -> Result<Statement> {
                     update,
                     body,
                 }),
-                None => Err(anyhow!("Body undefined in for loop")),
+                None => Err(anyhow!("For loop missing body")),
             }
         }
-        Rule::return_stmt => Ok(Statement::Return(parse_exprs(pair.into_inner())?)),
-        Rule::expr_stmt => Ok(Statement::Expression(parse_exprs(pair.into_inner())?)),
-        _ => Err(anyhow!("Unsupported statement type: {:?}", pair.as_rule())),
+
+        Rule::return_stmt => Ok(Statement::Return(
+            parse_exprs(pair.into_inner())
+                .map_err(|e| anyhow!("Failed to parse return value: {}", e))?,
+        )),
+
+        Rule::expr_stmt => Ok(Statement::Expression(
+            parse_exprs(pair.into_inner())
+                .map_err(|e| anyhow!("Failed to parse expression statement: {}", e))?,
+        )),
+
+        other => Err(anyhow!(
+            "Unsupported or unexpected statement type: {:?}",
+            other
+        )),
     }
 }
