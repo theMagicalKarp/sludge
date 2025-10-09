@@ -149,14 +149,10 @@ impl std::fmt::Display for Hashable {
 }
 
 impl Value {
-    pub fn is_truthy(&self) -> bool {
+    pub fn to_bool(&self) -> Result<bool, Error> {
         match self {
-            Value::Null => false,
-            Value::String(s) => !s.is_empty(),
-            Value::Boolean(v) => *v,
-            Value::Int32(n) => *n == 0,
-            Value::List { values } => !values.borrow().is_empty(),
-            _ => false,
+            Value::Boolean(v) => Ok(*v),
+            v => Err(anyhow!("Expcted boolean got: {}", v)),
         }
     }
 }

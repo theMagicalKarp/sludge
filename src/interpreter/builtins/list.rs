@@ -164,7 +164,7 @@ pub fn filter(interpreter: Rc<Interpreter>, this: &Value, args: &[Value]) -> Res
             .eval_expr(stmt)
             .with_context(|| "filter: function evaluation failed")?;
         let ret = expect_return(evaluated, "filter")?;
-        if ret.is_truthy() {
+        if ret.to_bool()? {
             out.push(v.clone());
         }
     }
@@ -189,7 +189,7 @@ pub fn all(interpreter: Rc<Interpreter>, this: &Value, args: &[Value]) -> Result
             .eval_expr(stmt)
             .with_context(|| "all: function evaluation failed")?;
         let ret = expect_return(evaluated, "all")?;
-        if !ret.is_truthy() {
+        if !ret.to_bool()? {
             return Ok(Value::Boolean(false));
         }
     }
@@ -211,7 +211,7 @@ pub fn any(interpreter: Rc<Interpreter>, this: &Value, args: &[Value]) -> Result
             .eval_expr(stmt)
             .with_context(|| "any: function evaluation failed")?;
         let ret = expect_return(evaluated, "any")?;
-        if ret.is_truthy() {
+        if ret.to_bool()? {
             return Ok(Value::Boolean(true));
         }
     }
