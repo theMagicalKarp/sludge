@@ -61,8 +61,8 @@ impl Interpreter {
             BinOp::Le => Ok(Value::Boolean(left <= right)),
             BinOp::Gt => Ok(Value::Boolean(left > right)),
             BinOp::Ge => Ok(Value::Boolean(left >= right)),
-            BinOp::And => Ok(Value::Boolean(left.is_truthy() && right.is_truthy())),
-            BinOp::Or => Ok(Value::Boolean(left.is_truthy() || right.is_truthy())),
+            BinOp::And => Ok(Value::Boolean(left.to_bool()? && right.to_bool()?)),
+            BinOp::Or => Ok(Value::Boolean(left.to_bool()? || right.to_bool()?)),
         }
     }
 
@@ -341,7 +341,7 @@ impl Interpreter {
 
     fn eval_logical_op(&self, op: &BinOp, left: &Expr, right: &Expr) -> Result<Value> {
         let lval = self.eval_expr(left)?;
-        let lbool = lval.is_truthy();
+        let lbool = lval.to_bool()?;
 
         match op {
             BinOp::And => {
@@ -350,7 +350,7 @@ impl Interpreter {
                     return Ok(Value::Boolean(false));
                 }
                 let rval = self.eval_expr(right)?;
-                Ok(Value::Boolean(rval.is_truthy()))
+                Ok(Value::Boolean(rval.to_bool()?))
             }
             BinOp::Or => {
                 // short-circuit: if left is true, return immediately
@@ -358,7 +358,7 @@ impl Interpreter {
                     return Ok(Value::Boolean(true));
                 }
                 let rval = self.eval_expr(right)?;
-                Ok(Value::Boolean(rval.is_truthy()))
+                Ok(Value::Boolean(rval.to_bool()?))
             }
             _ => unreachable!("eval_logical_op called with non-logical operator"),
         }
@@ -367,7 +367,7 @@ impl Interpreter {
     fn eval_unary_op(&self, op: &UnOp, operand: &Value) -> Result<Value> {
         match op {
             UnOp::Neg => -operand.clone(),
-            UnOp::Not => Ok(Value::Boolean(!operand.is_truthy())),
+            UnOp::Not => Ok(Value::Boolean(!operand.to_bool()?)),
         }
     }
 
@@ -421,7 +421,7 @@ impl Interpreter {
                 else_stmt,
             } => {
                 let cond_val = self.eval_expr(condition)?;
-                if cond_val.is_truthy() {
+                if cond_val.to_bool()? {
                     return self.eval_expr(then_stmt);
                 } else if let Some(else_branch) = else_stmt {
                     return self.eval_expr(else_branch);
@@ -430,7 +430,7 @@ impl Interpreter {
                 Ok(Value::Null)
             }
             Statement::While { condition, body } => {
-                while self.eval_expr(condition)?.is_truthy() {
+                while self.eval_expr(condition)?.to_bool()? {
                     if let Value::Return { value } = self.eval_expr(body)? {
                         return Ok(Value::Return { value });
                     }
@@ -449,7 +449,7 @@ impl Interpreter {
 
                 loop {
                     if let Some(cond) = condition
-                        && !self.eval_expr(cond)?.is_truthy()
+                        && !self.eval_expr(cond)?.to_bool()?
                     {
                         break;
                     };
