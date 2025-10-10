@@ -47,8 +47,8 @@ print(nums.map(add_ten)) # list(11, 12, 13, 14)
 ## Commands
 
 ```
-sludge run path/to/file.sludge     # Run a Sludge program
-sludge ast path/to/file.sludge     # Print the abstract syntax tree
+sludge run examples/main.sludge    # Run a Sludge program
+sludge ast examples/main.sludge    # Print the abstract syntax tree
 sludge repl                        # Start the interactive REPL
 ```
 
@@ -68,9 +68,9 @@ make test        # Run all tests
 make lint        # Check code formatting and clippy warnings
 make fix         # Automatically fix lint issues
 
-make run path/to/file.sludge  # Run a file
-make ast path/to/file.sludge  # Print the AST
-make repl                     # Launch the REPL
+make run FILE=examples/main.sludge  # Run a file
+make ast FILE=examples/main.sludge  # Print the AST
+make repl                           # Launch the REPL
 ```
 
 ## Roadmap / TODO
@@ -78,7 +78,7 @@ make repl                     # Launch the REPL
 - Module System — Capability to import and link multiple .sludge files
 - Static Typing — Move towards optional or enforced type annotations
 - Better Error Handling — Using
-  [monads](https://en.wikipedia.org/wiki/Monad_(functional_programming)) for
+  [monads](<https://en.wikipedia.org/wiki/Monad_(functional_programming)>) for
   composable and expressive error flow
 - Extended Types — Add float32, float64, u8, u32, u64, etc.
 - System Interaction — Expose process I/O and environment variables
